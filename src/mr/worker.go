@@ -31,12 +31,10 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 	for {
 		args := AcquireTaskArgs{}
 		reply := AcquireTaskReply{}
-		ok := call("Coordinator.AcquireTask", &args, &reply)
-		if !ok {
+		if ok := call("Coordinator.AcquireTask", &args, &reply); !ok {
 			log.Fatal("call rpc AcquireTask Failed")
 		}
 		if reply.TaskType == MapTask {
-			fmt.Printf("Start to Do MAP Task %v!\n", reply.TaskID)
 			filename := reply.Filename
 			file, err := os.Open(filename)
 			if err != nil {
@@ -46,10 +44,10 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			if err != nil {
 				log.Fatalf("cannot read map task file %v", filename)
 			}
-			file.Close()
-			//fmt.Printf("	MAP Task %v: start to execute mapf\n", reply.TaskID)
+			if err := file.Close(); err != nil {
+				log.Fatalf("cannot close map task file %v", filename)
+			}
 			kva := mapf(filename, string(content))
-			//fmt.Printf("	MAP Task %v: finish to execute mapf\n", reply.TaskID)
 			outputArrays := make([][]KeyValue, reply.NumReduceTask)
 			for i := 0; i < reply.NumReduceTask; i++ {
 				outputArrays[i] = []KeyValue{}
@@ -60,35 +58,32 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			}
 			for i := 0; i < reply.NumReduceTask; i++ {
 				interFilename := fmt.Sprintf("mr-inter-%d-%d", reply.TaskID, i)
-				//fmt.Printf("	MAP Task %v: start to create intermediate file %v\n", reply.TaskID, interFilename)
 				interFile, err := os.CreateTemp(".", interFilename)
 				if err != nil {
 					log.Fatalf("cannot create temp file: %v", err)
 				}
 				encoder := json.NewEncoder(interFile)
 				for _, kv := range outputArrays[i] {
-					err := encoder.Encode(&kv)
-					if err != nil {
+					if err := encoder.Encode(&kv); err != nil {
 						log.Fatalf("cannot encode ")
 					}
 				}
-				interFile.Close()
+				if err := interFile.Close(); err != nil {
+					log.Fatalf("cannot close map task intermediate file %v", interFilename)
+				}
 				// change intermediate file name atomically
 				if err := os.Rename(interFile.Name(), interFilename); err != nil {
 					log.Fatalf("Map Task: cannot rename temp file: %v", err)
 				}
-				//fmt.Printf("	MAP Task %v: finish to create intermediate file %v\n", reply.TaskID, interFilename)
 			}
 			finishArgs := FinishTaskArgs{}
 			finishReply := FinishTaskReply{}
 			finishArgs.TaskType = MapTask
 			finishArgs.TaskID = reply.TaskID
-			ok := call("Coordinator.FinishTask", &finishArgs, &finishReply)
-			if !ok {
+			if ok := call("Coordinator.FinishTask", &finishArgs, &finishReply); !ok {
 				log.Fatal("call rpc FinishTask Failed")
 			}
 		} else if reply.TaskType == ReduceTask {
-			fmt.Printf("Start to Do Reduce Task %v!\n", reply.TaskID)
 			interDataMap := make(map[string][]string)
 			for i := 0; i < reply.NumMapTask; i++ {
 				filename := fmt.Sprintf("mr-inter-%d-%d", i, reply.TaskID)
@@ -104,10 +99,12 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 					}
 					interDataMap[kv.Key] = append(interDataMap[kv.Key], kv.Value)
 				}
-				file.Close()
+				if err := file.Close(); err != nil {
+					log.Fatalf("cannot close reduce task input file %v", filename)
+				}
 			}
 
-			outputKVA := []KeyValue{}
+			var outputKVA []KeyValue
 			for key, vals := range interDataMap {
 				kv := KeyValue{key, reducef(key, vals)}
 				outputKVA = append(outputKVA, kv)
@@ -121,7 +118,9 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			for _, kv := range outputKVA {
 				fmt.Fprintf(tempFile, "%v %v\n", kv.Key, kv.Value)
 			}
-			tempFile.Close()
+			if err := tempFile.Close(); err != nil {
+				log.Fatalf("cannot close reduce task output file %v", outputFilename)
+			}
 			if err := os.Rename(tempFile.Name(), outputFilename); err != nil {
 				log.Fatalf("Reduce Task: cannot rename temp file: %v", err)
 			}
@@ -129,8 +128,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			finishReply := FinishTaskReply{}
 			finishArgs.TaskType = ReduceTask
 			finishArgs.TaskID = reply.TaskID
-			ok := call("Coordinator.FinishTask", &finishArgs, &finishReply)
-			if !ok {
+			if ok := call("Coordinator.FinishTask", &finishArgs, &finishReply); !ok {
 				log.Fatal("call rpc FinishTask Failed")
 			}
 		} else if reply.TaskType == WaitTask {
