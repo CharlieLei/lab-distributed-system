@@ -66,8 +66,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		// If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
 		rf.commitIndex = min(args.LeaderCommit, rf.getLastLog().Index)
 		rf.applyCond.Signal()
-		Debug(dError, "S%d:T%d {%v,cIdx%d,lApp%d,1Log%v,-1Log%v} HAS SIGNAL",
-			rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
 	}
 
 	reply.Term, reply.Success = rf.currentTerm, true

@@ -26,17 +26,17 @@ func (rf *Raft) ticker() {
 }
 
 func (rf *Raft) startElection() {
-	args := RequestVoteArgs{
-		Term:         rf.currentTerm,
-		CandidateId:  rf.me,
-		LastLogIndex: rf.getLastLog().Index,
-		LastLogTerm:  rf.getLastLog().Term,
-	}
 	rf.votedFor = rf.me
 	grantedVote := 1
 	for peer := range rf.peers {
 		if peer == rf.me {
 			continue
+		}
+		args := RequestVoteArgs{
+			Term:         rf.currentTerm,
+			CandidateId:  rf.me,
+			LastLogIndex: rf.getLastLog().Index,
+			LastLogTerm:  rf.getLastLog().Term,
 		}
 		go func(receiver int) {
 			reply := RequestVoteReply{}
@@ -68,31 +68,26 @@ func (rf *Raft) startElection() {
 					Debug(dWarn, "S%d:T%d Old ReqRply from S%d, rf.currentTerm %d != args.Term %d OR state %v not candidate",
 						rf.me, rf.currentTerm, receiver, rf.currentTerm, args.Term, rf.state)
 				}
-			} else {
-				rf.mu.Lock()
-				defer rf.mu.Unlock()
-				Debug(dError, "S%d:T%d Cannot Send ReqArgs To S%d, ReqArgs%v", rf.me, args.Term, receiver, args)
 			}
 		}(peer)
 	}
 }
 
 func (rf *Raft) broadcastHeartbeat() {
-	args := AppendEntriesArgs{
-		Term:         rf.currentTerm,
-		LeaderId:     rf.me,
-		LeaderCommit: rf.commitIndex,
-	}
 	for peer := range rf.peers {
 		if peer == rf.me {
 			continue
 		}
 		peerNextIdx := rf.nextIndex[peer]
-		args.PrevLogIndex = peerNextIdx - 1
-		args.PrevLogTerm = rf.getLog(peerNextIdx - 1).Term
-		args.Entries = make([]Entry, rf.getLastLog().Index-peerNextIdx+1) // 传送rf.logs[nextIndex,...,lastIdx]
+		args := AppendEntriesArgs{
+			Term:         rf.currentTerm,
+			LeaderId:     rf.me,
+			PrevLogIndex: peerNextIdx - 1,
+			PrevLogTerm:  rf.getLog(peerNextIdx - 1).Term,
+			Entries:      make([]Entry, rf.getLastLog().Index-peerNextIdx+1), // 传送rf.logs[nextIndex,...,lastIdx]
+			LeaderCommit: rf.commitIndex,
+		}
 		copy(args.Entries, rf.getLogSlice(peerNextIdx, rf.getLastLog().Index+1))
-		args.LeaderCommit = rf.commitIndex
 
 		go func(receiver int) {
 			reply := AppendEntriesReply{}
@@ -137,19 +132,15 @@ func (rf *Raft) broadcastHeartbeat() {
 					Debug(dWarn, "S%d:T%d Old AppRply, rf.currentTerm %d != args.Term %d",
 						rf.me, rf.currentTerm, rf.currentTerm, args.Term)
 				}
-			} else {
-				rf.mu.Lock()
-				defer rf.mu.Unlock()
-				Debug(dError, "S%d:T%d Cannot Send AppArgs To S%d, AppArgs%v", rf.me, args.Term, receiver, args)
 			}
 		}(peer)
 	}
 }
 
 func (rf *Raft) getNewCommitIndex() int {
-	idx := rf.commitIndex + 1
-	for idx <= rf.getLastLog().Index {
-		// todo：从后往前查找，由于每次被选为leader时都会插入一个无操作的entry
+	idx := rf.getLastLog().Index
+	for idx >= rf.commitIndex+1 {
+		// 从后往前查找，由于每次被选为leader时都会插入一个无操作的entry
 		// 因此能避免出现leader commit自己的entry之后被其他节点打断，无法让follower commit的情况
 		// 但这样无法通过测试用例对commandIndex的要求
 		matchServerCnt := 0
@@ -158,10 +149,10 @@ func (rf *Raft) getNewCommitIndex() int {
 				matchServerCnt++
 			}
 		}
-		if matchServerCnt <= len(rf.peers)/2 || rf.getLog(idx).Term != rf.currentTerm {
+		if matchServerCnt > len(rf.peers)/2 && rf.getLog(idx).Term == rf.currentTerm {
 			break
 		}
-		idx++
+		idx--
 	}
-	return idx - 1
+	return idx
 }

@@ -25,11 +25,7 @@ func (rf *Raft) applier() {
 	for rf.killed() == false {
 		rf.mu.Lock()
 		for rf.commitIndex <= rf.lastApplied {
-			Debug(dError, "S%d:T%d {%v,cIdx%d,lApp%d,1Log%v,-1Log%v} START WAIT",
-				rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
 			rf.applyCond.Wait()
-			Debug(dError, "S%d:T%d {%v,cIdx%d,lApp%d,1Log%v,-1Log%v} GET SIGNAL",
-				rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
 		}
 		firstIdx, commitIdx, lastApplied := rf.getFirstLog().Index, rf.commitIndex, rf.lastApplied
 		entries := make([]Entry, commitIdx-lastApplied)
@@ -41,8 +37,6 @@ func (rf *Raft) applier() {
 				Command:      entry.Command,
 				CommandIndex: entry.Index,
 			}
-			Debug(dCommit, "S%d:T%d Apply Entry%v",
-				rf.me, rf.currentTerm, entry)
 		}
 		rf.mu.Lock()
 		Debug(dCommit, "S%d:T%d Apply Entry[%d:%d]",
