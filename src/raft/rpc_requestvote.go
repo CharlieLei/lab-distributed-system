@@ -23,8 +23,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	defer Debug(dVote, "S%d {%v,T%d,cIdx%d,lApp%d,1Log%v,-1Log%v} ReqArgs%v, ReqRply%v",
-		rf.me, rf.state, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), args, reply)
+	defer Debug(dVote, "S%d:T%d {%v,cIdx%d,lApp%d,1Log%v,-1Log%v} BEFORE ReqArgs%v, ReqRply%v",
+		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), args, reply)
 
 	if args.Term < rf.currentTerm ||
 		(args.Term == rf.currentTerm && rf.votedFor != -1 && rf.votedFor != args.CandidateId) {
@@ -35,13 +35,19 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.changeState(StateFollower)
 		rf.currentTerm, rf.votedFor = args.Term, -1
 	}
-	//if !rf.isLogUpToDate(args.LastLogTerm, args.LastLogIndex) {
-	//	reply.Term, reply.VoteGranted = rf.currentTerm, false
-	//	return
-	//}
+	if !rf.isLogUpToDate(args.LastLogTerm, args.LastLogIndex) {
+		reply.Term, reply.VoteGranted = rf.currentTerm, false
+		return
+	}
 	rf.votedFor = args.CandidateId
 	rf.electionTimer.Reset(randomElectionTimeout())
 	reply.Term, reply.VoteGranted = rf.currentTerm, true
+}
+
+func (rf *Raft) isLogUpToDate(candidateLastLogTerm, candidateLastLogIndex int) bool {
+	lastLog := rf.getLastLog()
+	return candidateLastLogTerm > lastLog.Term ||
+		(candidateLastLogTerm == lastLog.Term && candidateLastLogIndex >= lastLog.Index)
 }
 
 // example code to send a RequestVote RPC to a server.

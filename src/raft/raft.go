@@ -49,27 +49,6 @@ type Entry struct {
 	Index   int
 }
 
-// as each Raft peer becomes aware that successive log entries are
-// committed, the peer should send an ApplyMsg to the service (or
-// tester) on the same server, via the applyCh passed to Make(). set
-// CommandValid to true to indicate that the ApplyMsg contains a newly
-// committed log entry.
-//
-// in part 2D you'll want to send other kinds of messages (e.g.,
-// snapshots) on the applyCh, but set CommandValid to false for these
-// other uses.
-type ApplyMsg struct {
-	CommandValid bool
-	Command      interface{}
-	CommandIndex int
-
-	// For 2D:
-	SnapshotValid bool
-	Snapshot      []byte
-	SnapshotTerm  int
-	SnapshotIndex int
-}
-
 // A Go object implementing a single Raft peer.
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
@@ -79,8 +58,9 @@ type Raft struct {
 	dead      int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
-	applyCh chan ApplyMsg
-	state   NodeState
+	applyCh   chan ApplyMsg
+	applyCond *sync.Cond
+	state     NodeState
 
 	currentTerm int
 	votedFor    int
@@ -169,13 +149,17 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 // term. the third return value is true if this server believes it is
 // the leader.
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
-
 	// Your code here (2B).
-
-	return index, term, isLeader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if rf.killed() || rf.state != StateLeader {
+		return -1, -1, false
+	} else {
+		entry := Entry{command, rf.currentTerm, rf.getLastLog().Index + 1}
+		rf.logs = append(rf.logs, entry)
+		Debug(dLeader, "S%d:T%d Start Entry %v", rf.me, rf.currentTerm, command)
+		return rf.getLastLog().Index, rf.currentTerm, true
+	}
 }
 
 // the tester doesn't halt goroutines created by Raft after each test,
@@ -227,25 +211,32 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
+	rf.applyCond = sync.NewCond(&rf.mu)
 
-	Debug(dInfo, "S%d {%v,T%d,cIdx %d,lApp %d,1Log %v,-1Log %v} initialize",
-		rf.me, rf.state, rf.currentTerm, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
+	Debug(dInfo, "S%d:T%d {%v,cIdx %d,lApp %d,1Log %v,-1Log %v} initialize",
+		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+	// start applier goroutine to apply committed logs into applyCh
+	go rf.applier()
 
 	return rf
 }
 
-func (rf *Raft) isLogUpToDate(candidateLastLogTerm, candidateLastLogIndex int) bool {
-	lastLog := rf.getLastLog()
-	return candidateLastLogTerm > lastLog.Term ||
-		(candidateLastLogTerm == lastLog.Term && candidateLastLogIndex > lastLog.Index)
-}
-
 func (rf *Raft) changeState(newState NodeState) {
-	Debug(dWarn, "S%d {T%d} %v -> %v", rf.me, rf.currentTerm, rf.state, newState)
+	Debug(dWarn, "S%d:T%d %v -> %v", rf.me, rf.currentTerm, rf.state, newState)
 	rf.state = newState
+	if newState == StateLeader {
+		// initialized to leader last log index + 1
+		for idx, _ := range rf.nextIndex {
+			rf.nextIndex[idx] = rf.getLastLog().Index + 1
+		}
+		// initialized to 0
+		for idx, _ := range rf.matchIndex {
+			rf.matchIndex[idx] = 0
+		}
+	}
 }
 
 func (rf *Raft) getFirstLog() Entry {
@@ -254,6 +245,15 @@ func (rf *Raft) getFirstLog() Entry {
 
 func (rf *Raft) getLastLog() Entry {
 	return rf.logs[len(rf.logs)-1] // todo
+}
+
+func (rf *Raft) getLog(index int) Entry {
+	return rf.logs[index-rf.getFirstLog().Index]
+}
+
+func (rf *Raft) getLogSlice(low, high int) []Entry {
+	firstIdx := rf.getFirstLog().Index
+	return rf.logs[low-firstIdx : high-firstIdx]
 }
 
 func stableHeartbeatTimeout() time.Duration {
