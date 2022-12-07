@@ -7,10 +7,12 @@ func (rf *Raft) ticker() {
 		select {
 		case <-rf.electionTimer.C:
 			rf.mu.Lock()
-			rf.changeState(StateCandidate)
-			rf.currentTerm += 1
-			rf.startElection()
-			rf.electionTimer.Reset(randomElectionTimeout())
+			if rf.state == StateFollower || rf.state == StateCandidate {
+				rf.changeState(StateCandidate)
+				rf.currentTerm += 1
+				rf.startElection()
+				rf.electionTimer.Reset(randomElectionTimeout())
+			}
 			rf.mu.Unlock()
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
@@ -47,13 +49,29 @@ func (rf *Raft) startElection() {
 						if grantedVote > len(rf.peers)/2 {
 							rf.changeState(StateLeader)
 							rf.broadcastHeartbeat()
+							rf.heartbeatTimer.Reset(stableHeartbeatTimeout())
 						}
 					} else if reply.Term > rf.currentTerm {
 						rf.changeState(StateFollower)
 						rf.currentTerm, rf.votedFor = reply.Term, -1
 						rf.electionTimer.Reset(randomElectionTimeout())
+					} else {
+						if !reply.VoteGranted {
+							Debug(dDrop, "S%d {T%d} ReqRply from S%d, not grant vote",
+								rf.me, rf.currentTerm, receiver)
+						} else {
+							Debug(dDrop, "S%d {T%d} ReqRply from S%d, reply.Term <= rf.currentTerm",
+								rf.me, rf.currentTerm, receiver, reply.Term, rf.currentTerm)
+						}
 					}
+				} else {
+					Debug(dWarn, "S%d {T%d} Old ReqRply, rf.currentTerm %d != args.Term %d OR state %v not candidate",
+						rf.me, rf.currentTerm, rf.currentTerm, args.Term, rf.state)
 				}
+			} else {
+				rf.mu.Lock()
+				defer rf.mu.Unlock()
+				Debug(dError, "S%d {T%d} Cannot Send ReqArgs To S%d, ReqArgs%v", rf.me, args.Term, receiver, args)
 			}
 		}(peer)
 	}
@@ -76,6 +94,10 @@ func (rf *Raft) broadcastHeartbeat() {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
 
+			} else {
+				rf.mu.Lock()
+				defer rf.mu.Unlock()
+				Debug(dError, "S%d {T%d} Cannot Send AppArgs To S%d, AppArgs%v", rf.me, args.Term, receiver, args)
 			}
 		}(peer)
 	}
