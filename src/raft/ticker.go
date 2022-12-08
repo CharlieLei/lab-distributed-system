@@ -104,7 +104,7 @@ func (rf *Raft) broadcastHeartbeat() {
 			if rf.sendAppendEntries(receiver, &args, &reply) {
 				rf.mu.Lock()
 				defer rf.mu.Unlock()
-				if rf.currentTerm == args.Term {
+				if rf.currentTerm == args.Term && rf.state == StateLeader {
 					if reply.Term > rf.currentTerm {
 						// 当前term已经比当前节点所在term大，该节点太久没收到最新heartbeat，仍以为自己是candidate或leader
 						rf.changeState(StateFollower)
