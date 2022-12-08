@@ -1,5 +1,7 @@
 package raft
 
+import "fmt"
+
 type AppendEntriesArgs struct {
 	Term         int
 	LeaderId     int
@@ -16,11 +18,23 @@ type AppendEntriesReply struct {
 	ConflictTerm  int
 }
 
+func (args *AppendEntriesArgs) tostring() string {
+	logstr := "[]"
+	if len(args.Entries) == 1 {
+		logstr = fmt.Sprintf("[%v]", args.Entries[0])
+	} else if len(args.Entries) > 1 {
+		logstr = fmt.Sprintf("[%v:%v]", args.Entries[0], args.Entries[len(args.Entries)-1])
+	}
+	return fmt.Sprintf("{%d %d %d %d %v %d}",
+		args.Term, args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, logstr, args.LeaderCommit)
+}
+
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	defer Debug(dClient, "S%d:T%d {%v,cIdx%d,lApp%d,1Log%v,-1Log%v} BEFORE AppArgs%v, AppRply%v",
-		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), args, reply)
+	defer rf.persist()
+	defer Debug(dClient, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} BEFORE AppArgs%v, AppRply%v",
+		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), args.tostring(), reply)
 
 	if args.Term < rf.currentTerm {
 		reply.Term, reply.Success = rf.currentTerm, false

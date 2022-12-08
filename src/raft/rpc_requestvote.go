@@ -23,7 +23,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	defer Debug(dVote, "S%d:T%d {%v,cIdx%d,lApp%d,1Log%v,-1Log%v} BEFORE ReqArgs%v, ReqRply%v",
+	defer rf.persist()
+	defer Debug(dVote, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} BEFORE ReqArgs%v, ReqRply%v",
 		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), args, reply)
 
 	if args.Term < rf.currentTerm ||

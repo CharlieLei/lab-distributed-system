@@ -18,6 +18,8 @@ package raft
 //
 
 import (
+	"6.824/labgob"
+	"bytes"
 	"math/rand"
 	//	"bytes"
 	"sync"
@@ -38,8 +40,8 @@ const (
 
 const (
 	ElectionIntervalRight = 500
-	ElectionIntervalLeft  = 300
-	HeartbeatInterval     = 50
+	ElectionIntervalLeft  = 50
+	HeartbeatInterval     = 10
 )
 
 type Entry struct {
@@ -88,13 +90,15 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	// Example:
-	// w := new(bytes.Buffer)
-	// e := labgob.NewEncoder(w)
-	// e.Encode(rf.xxx)
-	// e.Encode(rf.yyy)
-	// data := w.Bytes()
-	// rf.persister.SaveRaftState(data)
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.logs)
+	data := w.Bytes()
+	rf.persister.SaveRaftState(data)
+	Debug(dPersist, "S%d:T%d Persist State, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}",
+		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
 }
 
 // restore previously persisted state.
@@ -103,18 +107,16 @@ func (rf *Raft) readPersist(data []byte) {
 		return
 	}
 	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var currentTerm int
+	var votedFor int
+	var logs []Entry
+	if d.Decode(&currentTerm) != nil || d.Decode(&votedFor) != nil || d.Decode(&logs) != nil {
+		Debug(dError, "S%d:T%d Cannot Read Persist", rf.me, rf.currentTerm)
+	} else {
+		rf.currentTerm, rf.votedFor, rf.logs = currentTerm, votedFor, logs
+	}
 }
 
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
@@ -156,6 +158,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	} else {
 		entry := Entry{command, rf.currentTerm, rf.getLastLog().Index + 1}
 		rf.logs = append(rf.logs, entry)
+		rf.persist()
 		Debug(dLeader, "S%d:T%d Start Entry %v", rf.me, rf.currentTerm, command)
 		return rf.getLastLog().Index, rf.currentTerm, true
 	}

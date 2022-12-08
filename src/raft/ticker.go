@@ -28,8 +28,11 @@ func (rf *Raft) ticker() {
 }
 
 func (rf *Raft) startElection() {
+	Debug(dVote, "S%d:T%d Start Election, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}",
+		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
 	rf.votedFor = rf.me
 	grantedVote := 1
+	rf.persist()
 	for peer := range rf.peers {
 		if peer == rf.me {
 			continue
@@ -49,9 +52,12 @@ func (rf *Raft) startElection() {
 					if reply.Term > rf.currentTerm {
 						rf.changeState(StateFollower)
 						rf.currentTerm, rf.votedFor = reply.Term, -1
+						rf.persist()
 						rf.electionTimer.Reset(randomElectionTimeout())
 					} else if reply.VoteGranted {
 						grantedVote += 1
+						Debug(dVote, "S%d:T%d Granted Vote %d From S%d",
+							rf.me, rf.currentTerm, grantedVote, receiver)
 						if grantedVote > len(rf.peers)/2 {
 							rf.changeState(StateLeader)
 							rf.broadcastHeartbeat()
@@ -67,8 +73,8 @@ func (rf *Raft) startElection() {
 						}
 					}
 				} else {
-					Debug(dWarn, "S%d:T%d Old ReqRply from S%d, rf.currentTerm %d != args.Term %d OR state %v not candidate",
-						rf.me, rf.currentTerm, receiver, rf.currentTerm, args.Term, rf.state)
+					//Debug(dWarn, "S%d:T%d Old ReqRply from S%d, rf.currentTerm %d != args.Term %d OR state %v not candidate",
+					//	rf.me, rf.currentTerm, receiver, rf.currentTerm, args.Term, rf.state)
 				}
 			}
 		}(peer)
@@ -76,6 +82,8 @@ func (rf *Raft) startElection() {
 }
 
 func (rf *Raft) broadcastHeartbeat() {
+	Debug(dTrace, "S%d:T%d Start Broadcast Heartbeat, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}",
+		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
 	for peer := range rf.peers {
 		if peer == rf.me {
 			continue
@@ -101,6 +109,7 @@ func (rf *Raft) broadcastHeartbeat() {
 						// 当前term已经比当前节点所在term大，该节点太久没收到最新heartbeat，仍以为自己是candidate或leader
 						rf.changeState(StateFollower)
 						rf.currentTerm, rf.votedFor = reply.Term, -1
+						rf.persist()
 						rf.electionTimer.Reset(randomElectionTimeout())
 					} else if reply.Success {
 						// If successful: update nextIndex and matchIndex for follower
@@ -131,8 +140,8 @@ func (rf *Raft) broadcastHeartbeat() {
 						}
 					}
 				} else {
-					Debug(dWarn, "S%d:T%d Old AppRply, rf.currentTerm %d != args.Term %d",
-						rf.me, rf.currentTerm, rf.currentTerm, args.Term)
+					//Debug(dWarn, "S%d:T%d Old AppRply, rf.currentTerm %d != args.Term %d",
+					//	rf.me, rf.currentTerm, rf.currentTerm, args.Term)
 				}
 			}
 		}(peer)
