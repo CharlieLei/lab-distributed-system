@@ -40,8 +40,8 @@ const (
 
 const (
 	ElectionIntervalRight = 500
-	ElectionIntervalLeft  = 50
-	HeartbeatInterval     = 10
+	ElectionIntervalLeft  = 150
+	HeartbeatInterval     = 50
 )
 
 type Entry struct {
