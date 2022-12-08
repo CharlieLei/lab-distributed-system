@@ -8,6 +8,7 @@ func (rf *Raft) ticker() {
 		case <-rf.electionTimer.C:
 			rf.mu.Lock()
 			if rf.state == StateFollower || rf.state == StateCandidate {
+				Debug(dTimer, "S%d:T%d Election Timer", rf.me, rf.currentTerm)
 				rf.changeState(StateCandidate)
 				rf.currentTerm += 1
 				rf.startElection()
@@ -17,6 +18,7 @@ func (rf *Raft) ticker() {
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
 			if rf.state == StateLeader {
+				Debug(dTimer, "S%d:T%d Heartbeat Timer", rf.me, rf.currentTerm)
 				rf.broadcastHeartbeat()
 				rf.heartbeatTimer.Reset(stableHeartbeatTimeout())
 			}

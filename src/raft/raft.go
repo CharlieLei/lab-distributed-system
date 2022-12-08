@@ -37,7 +37,6 @@ const (
 )
 
 const (
-	TimerInterval         = 1
 	ElectionIntervalRight = 500
 	ElectionIntervalLeft  = 300
 	HeartbeatInterval     = 50
