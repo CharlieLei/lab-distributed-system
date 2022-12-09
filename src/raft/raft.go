@@ -237,6 +237,9 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 	rf.applyCond = sync.NewCond(&rf.mu)
+	// 如果日志有一部分已经转成了快照，则lastApplied应该设为lastIncludedIndex，若从0开始则会在apply日志项时出现越界
+	// logs的第0项是dummy，用来存快照的lastIncludedIndex和lastIncludedTerm
+	rf.commitIndex, rf.lastApplied = rf.logs[0].Index, rf.logs[0].Index
 
 	Debug(dInfo, "S%d:T%d {%v,cIdx %d,lApp %d,1Log %v,-1Log %v} initialize",
 		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())

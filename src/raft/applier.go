@@ -27,9 +27,11 @@ func (rf *Raft) applier() {
 		for rf.commitIndex <= rf.lastApplied {
 			rf.applyCond.Wait()
 		}
-		firstIdx, commitIdx, lastApplied := rf.getFirstLog().Index, rf.commitIndex, rf.lastApplied
+		commitIdx, lastApplied := rf.commitIndex, rf.lastApplied
 		entries := make([]Entry, commitIdx-lastApplied)
-		copy(entries, rf.logs[lastApplied+1-firstIdx:commitIdx+1-firstIdx]) // logs[lastApplied+1,...,commitIdx]
+		Debug(dInfo, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} Applier Copy Entries{len %d}",
+			rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), len(entries))
+		copy(entries, rf.getLogSlice(lastApplied+1, commitIdx+1)) // logs[lastApplied+1,...,commitIdx]
 		rf.mu.Unlock()
 		for _, entry := range entries {
 			rf.applyCh <- ApplyMsg{

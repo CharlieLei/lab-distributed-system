@@ -86,7 +86,8 @@ func (rf *Raft) broadcastHeartbeat() {
 		}
 		if rf.nextIndex[peer] <= rf.getFirstLog().Index {
 			// 先发快照，等下一次heartbeat再appendEntries
-			Debug(dSnap, "S%d:T%d InstallSnapshot to S%d", rf.me, rf.currentTerm, peer)
+			Debug(dSnap, "S%d:T%d InstallSnapshot to S%d, nextIndex[%d] %d <= 1Log%v",
+				rf.me, rf.currentTerm, peer, peer, rf.nextIndex[peer], rf.getFirstLog())
 			rf.installSnapshotHandler(peer)
 		} else {
 			rf.appendEntriesHandler(peer)
@@ -133,7 +134,7 @@ func (rf *Raft) appendEntriesHandler(peer int) {
 						rf.nextIndex[receiver] = reply.ConflictIndex
 					} else {
 						termMatchIdx := -1
-						for idx := rf.getLastLog().Index + 1; idx > rf.getFirstLog().Index; idx-- {
+						for idx := rf.getLastLog().Index + 1; idx > rf.getFirstLog().Index+1; idx-- {
 							if rf.getLog(idx-1).Term == reply.ConflictTerm {
 								termMatchIdx = idx
 								break
@@ -191,6 +192,8 @@ func (rf *Raft) installSnapshotHandler(peer int) {
 					rf.currentTerm, rf.votedFor = reply.Term, -1
 					rf.persist()
 					rf.electionTimer.Reset(randomElectionTimeout())
+				} else {
+					rf.nextIndex[receiver] = max(rf.nextIndex[receiver], args.LastIncludedIndex+1)
 				}
 			}
 		}

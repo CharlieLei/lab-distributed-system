@@ -56,7 +56,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		} else {
 			conflictTerm := rf.getLog(args.PrevLogIndex).Term
 			conflictIdx := args.PrevLogIndex
-			for conflictIdx > firstIdx && rf.getLog(conflictIdx-1).Term == conflictTerm {
+			for conflictIdx > firstIdx+1 && rf.getLog(conflictIdx-1).Term == conflictTerm {
 				conflictIdx--
 			}
 			reply.ConflictTerm, reply.ConflictIndex = conflictTerm, conflictIdx
