@@ -39,9 +39,10 @@ func (rf *Raft) applier() {
 			}
 		}
 		rf.mu.Lock()
-		Debug(dCommit, "S%d:T%d Apply Entry[%d:%d]",
-			rf.me, rf.currentTerm, lastApplied+1, commitIdx)
-		rf.lastApplied = commitIdx // 可能此时的rf.commitIdx已经改变，与commitIdx变量中的值不同
+		Debug(dCommit, "S%d:T%d Apply Entry[%d:%d]", rf.me, rf.currentTerm, lastApplied+1, commitIdx)
+		// CAUTION: 可能此时的rf.commitIdx已经改变，与commitIdx变量中的值不同
+		//          也有可能在将ApplyMsg送入applyCh时，该节点收到leader的快照，此快照远比此次apply的日志要新，此时lastApplied已经根据快照修改
+		rf.lastApplied = max(commitIdx, rf.lastApplied)
 		rf.mu.Unlock()
 	}
 }

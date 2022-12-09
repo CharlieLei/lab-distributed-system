@@ -90,12 +90,7 @@ func (rf *Raft) GetState() (int, bool) {
 // see paper's Figure 2 for a description of what should be persistent.
 func (rf *Raft) persist() {
 	// Your code here (2C).
-	w := new(bytes.Buffer)
-	e := labgob.NewEncoder(w)
-	e.Encode(rf.currentTerm)
-	e.Encode(rf.votedFor)
-	e.Encode(rf.logs)
-	data := w.Bytes()
+	data := rf.encodeState()
 	rf.persister.SaveRaftState(data)
 	Debug(dPersist, "S%d:T%d Persist State, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}",
 		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
@@ -122,9 +117,25 @@ func (rf *Raft) readPersist(data []byte) {
 // A service wants to switch to snapshot.  Only do so if Raft hasn't
 // have more recent info since it communicate the snapshot on applyCh.
 func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int, snapshot []byte) bool {
-
 	// Your code here (2D).
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
+	if lastIncludedIndex > rf.getLastLog().Index {
+		// 快照比当前节点中的所有日志项都更加新
+		rf.logs = make([]Entry, 1)
+	} else {
+		// 移除比快照旧的日志项
+		rf.logs = rf.logs[lastIncludedIndex-rf.getFirstLog().Index:]
+		rf.logs[0].Command = nil
+	}
+	// 第0个用来记录快照的lastIncludedIndex和lastIncludedTerm
+	rf.logs[0].Term, rf.logs[0].Index = lastIncludedTerm, lastIncludedIndex
+	rf.commitIndex, rf.lastApplied = lastIncludedIndex, lastIncludedIndex
+	// 被调用CondInstallSnapshot是不具有最新快照的节点，需要保存快照到本地
+	rf.persister.SaveStateAndSnapshot(rf.encodeState(), snapshot)
+	Debug(dSnap, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} CondInstallSnapshot, AFTER Accept Snapshot{%d %d}",
+		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), lastIncludedIndex, lastIncludedTerm)
 	return true
 }
 
@@ -134,7 +145,19 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 // that index. Raft should now trim its log as much as possible.
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
-
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	snapshotIdx := rf.getFirstLog().Index
+	if index <= snapshotIdx {
+		Debug(dSnap, "S%d:T%d Reject Snapshot %d as Current SnapshotIdx %d is larger",
+			rf.me, rf.currentTerm, index, snapshotIdx)
+		return
+	}
+	rf.logs = rf.logs[index-snapshotIdx:] // 第0个用来记录快照的lastIncludedIndex和lastIncludedTerm
+	rf.logs[0].Command = nil
+	rf.persister.SaveStateAndSnapshot(rf.encodeState(), snapshot)
+	Debug(dSnap, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} AFTER Install Snapshot %d",
+		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), index)
 }
 
 // the service using Raft (e.g. a k/v server) wants to start
@@ -256,6 +279,16 @@ func (rf *Raft) getLog(index int) Entry {
 func (rf *Raft) getLogSlice(low, high int) []Entry {
 	firstIdx := rf.getFirstLog().Index
 	return rf.logs[low-firstIdx : high-firstIdx]
+}
+
+func (rf *Raft) encodeState() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.logs)
+	data := w.Bytes()
+	return data
 }
 
 func stableHeartbeatTimeout() time.Duration {

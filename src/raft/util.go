@@ -65,7 +65,13 @@ func Debug(topic logTopic, format string, a ...interface{}) {
 func min(a, b int) int {
 	if a < b {
 		return a
-	} else {
-		return b
 	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

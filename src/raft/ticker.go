@@ -56,9 +56,8 @@ func (rf *Raft) startElection() {
 						rf.electionTimer.Reset(randomElectionTimeout())
 					} else if reply.VoteGranted {
 						grantedVote += 1
-						Debug(dVote, "S%d:T%d Granted Vote %d From S%d",
-							rf.me, rf.currentTerm, grantedVote, receiver)
 						if grantedVote > len(rf.peers)/2 {
+							Debug(dVote, "S%d:T%d Granted Majority Vote", rf.me, rf.currentTerm)
 							rf.changeState(StateLeader)
 							rf.broadcastHeartbeat()
 							rf.heartbeatTimer.Reset(stableHeartbeatTimeout())
@@ -72,9 +71,6 @@ func (rf *Raft) startElection() {
 								rf.me, rf.currentTerm, receiver, reply.Term, rf.currentTerm)
 						}
 					}
-				} else {
-					//Debug(dWarn, "S%d:T%d Old ReqRply from S%d, rf.currentTerm %d != args.Term %d OR state %v not candidate",
-					//	rf.me, rf.currentTerm, receiver, rf.currentTerm, args.Term, rf.state)
 				}
 			}
 		}(peer)
@@ -88,64 +84,71 @@ func (rf *Raft) broadcastHeartbeat() {
 		if peer == rf.me {
 			continue
 		}
-		peerNextIdx := rf.nextIndex[peer]
-		args := AppendEntriesArgs{
-			Term:         rf.currentTerm,
-			LeaderId:     rf.me,
-			PrevLogIndex: peerNextIdx - 1,
-			PrevLogTerm:  rf.getLog(peerNextIdx - 1).Term,
-			Entries:      make([]Entry, rf.getLastLog().Index-peerNextIdx+1), // 传送rf.logs[nextIndex,...,lastIdx]
-			LeaderCommit: rf.commitIndex,
+		if rf.nextIndex[peer] <= rf.getFirstLog().Index {
+			// 先发快照，等下一次heartbeat再appendEntries
+			Debug(dSnap, "S%d:T%d InstallSnapshot to S%d", rf.me, rf.currentTerm, peer)
+			rf.installSnapshotHandler(peer)
+		} else {
+			rf.appendEntriesHandler(peer)
 		}
-		copy(args.Entries, rf.getLogSlice(peerNextIdx, rf.getLastLog().Index+1))
+	}
+}
 
-		go func(receiver int) {
-			reply := AppendEntriesReply{}
-			if rf.sendAppendEntries(receiver, &args, &reply) {
-				rf.mu.Lock()
-				defer rf.mu.Unlock()
-				if rf.currentTerm == args.Term && rf.state == StateLeader {
-					if reply.Term > rf.currentTerm {
-						// 当前term已经比当前节点所在term大，该节点太久没收到最新heartbeat，仍以为自己是candidate或leader
-						rf.changeState(StateFollower)
-						rf.currentTerm, rf.votedFor = reply.Term, -1
-						rf.persist()
-						rf.electionTimer.Reset(randomElectionTimeout())
-					} else if reply.Success {
-						// If successful: update nextIndex and matchIndex for follower
-						// CAUTION: 可能该消息返回时，rf.log已经变化了，所以rf.nextIndex不能加len(rf.log)
-						//          同样不能直接在rf.nextIndex上加，因为可能leader发送了两个heartbeat要求follower加上新entry，此时就会返回两次；若直接在rf.nextIndex上加，则会加两次
-						rf.nextIndex[receiver] = args.PrevLogIndex + len(args.Entries) + 1
-						rf.matchIndex[receiver] = rf.nextIndex[receiver] - 1
-						// If there exists an N such that N > commitIndex, a majority of matchIndex[i] >= N,
-						// and log[N].term == currentTerm: set commitIndex = N
-						rf.commitIndex = rf.getNewCommitIndex()
-						rf.applyCond.Signal()
-					} else if !reply.Success {
-						if reply.ConflictTerm == -1 {
-							rf.nextIndex[receiver] = reply.ConflictIndex
-						} else {
-							termMatchIdx := -1
-							for idx := rf.getLastLog().Index + 1; idx > rf.getFirstLog().Index; idx-- {
-								if rf.getLog(idx-1).Term == reply.ConflictTerm {
-									termMatchIdx = idx
-									break
-								}
-							}
-							if termMatchIdx == -1 {
-								rf.nextIndex[receiver] = reply.ConflictIndex
-							} else {
-								rf.nextIndex[receiver] = termMatchIdx
+func (rf *Raft) appendEntriesHandler(peer int) {
+	peerNextIdx := rf.nextIndex[peer]
+	args := AppendEntriesArgs{
+		Term:         rf.currentTerm,
+		LeaderId:     rf.me,
+		PrevLogIndex: peerNextIdx - 1,
+		PrevLogTerm:  rf.getLog(peerNextIdx - 1).Term,
+		Entries:      make([]Entry, rf.getLastLog().Index-peerNextIdx+1), // 传送rf.logs[nextIndex,...,lastIdx]
+		LeaderCommit: rf.commitIndex,
+	}
+	copy(args.Entries, rf.getLogSlice(peerNextIdx, rf.getLastLog().Index+1))
+
+	go func(receiver int) {
+		reply := AppendEntriesReply{}
+		if rf.sendAppendEntries(receiver, &args, &reply) {
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
+			if rf.currentTerm == args.Term && rf.state == StateLeader {
+				if reply.Term > rf.currentTerm {
+					// 当前term已经比当前节点所在term大，该节点太久没收到最新heartbeat，仍以为自己是candidate或leader
+					rf.changeState(StateFollower)
+					rf.currentTerm, rf.votedFor = reply.Term, -1
+					rf.persist()
+					rf.electionTimer.Reset(randomElectionTimeout())
+				} else if reply.Success {
+					// If successful: update nextIndex and matchIndex for follower
+					// CAUTION: 可能该消息返回时，rf.log已经变化了，所以rf.nextIndex不能加len(rf.log)
+					//          同样不能直接在rf.nextIndex上加，因为可能leader发送了两个heartbeat要求follower加上新entry，此时就会返回两次；若直接在rf.nextIndex上加，则会加两次
+					rf.nextIndex[receiver] = args.PrevLogIndex + len(args.Entries) + 1
+					rf.matchIndex[receiver] = rf.nextIndex[receiver] - 1
+					// If there exists an N such that N > commitIndex, a majority of matchIndex[i] >= N,
+					// and log[N].term == currentTerm: set commitIndex = N
+					rf.commitIndex = rf.getNewCommitIndex()
+					rf.applyCond.Signal()
+				} else if !reply.Success {
+					if reply.ConflictTerm == -1 {
+						rf.nextIndex[receiver] = reply.ConflictIndex
+					} else {
+						termMatchIdx := -1
+						for idx := rf.getLastLog().Index + 1; idx > rf.getFirstLog().Index; idx-- {
+							if rf.getLog(idx-1).Term == reply.ConflictTerm {
+								termMatchIdx = idx
+								break
 							}
 						}
+						if termMatchIdx == -1 {
+							rf.nextIndex[receiver] = reply.ConflictIndex
+						} else {
+							rf.nextIndex[receiver] = termMatchIdx
+						}
 					}
-				} else {
-					//Debug(dWarn, "S%d:T%d Old AppRply, rf.currentTerm %d != args.Term %d",
-					//	rf.me, rf.currentTerm, rf.currentTerm, args.Term)
 				}
 			}
-		}(peer)
-	}
+		}
+	}(peer)
 }
 
 func (rf *Raft) getNewCommitIndex() int {
@@ -166,4 +169,30 @@ func (rf *Raft) getNewCommitIndex() int {
 		idx--
 	}
 	return idx
+}
+
+func (rf *Raft) installSnapshotHandler(peer int) {
+	args := InstallSnapshotArgs{
+		Term:              rf.currentTerm,
+		LeaderId:          rf.me,
+		LastIncludedIndex: rf.getFirstLog().Index,
+		LastIncludedTerm:  rf.getFirstLog().Term,
+		Data:              rf.persister.ReadSnapshot(),
+	}
+
+	go func(receiver int) {
+		reply := InstallSnapshotReply{}
+		if rf.sendInstallSnapshot(receiver, &args, &reply) {
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
+			if rf.currentTerm == args.Term && rf.state == StateLeader {
+				if reply.Term > rf.currentTerm {
+					rf.changeState(StateFollower)
+					rf.currentTerm, rf.votedFor = reply.Term, -1
+					rf.persist()
+					rf.electionTimer.Reset(randomElectionTimeout())
+				}
+			}
+		}
+	}(peer)
 }
