@@ -37,7 +37,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.persist()
 	}
 	rf.changeState(StateFollower)
-	rf.electionTimer.Reset(randomElectionTimeout())
+	rf.electionTimer.Reset(randomElectionTimeout(rf.me, rf.currentTerm))
 
 	// outdated snapshot
 	if args.LastIncludedIndex <= rf.commitIndex {

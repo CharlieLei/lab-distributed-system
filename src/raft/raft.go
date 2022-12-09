@@ -39,9 +39,9 @@ const (
 )
 
 const (
-	ElectionIntervalRight = 500
-	ElectionIntervalLeft  = 150
-	HeartbeatInterval     = 50
+	ElectionIntervalRight = 1000
+	ElectionIntervalLeft  = 500
+	HeartbeatInterval     = 150
 )
 
 type Entry struct {
@@ -231,7 +231,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		nextIndex:      make([]int, len(peers)),
 		matchIndex:     make([]int, len(peers)),
 		heartbeatTimer: time.NewTimer(stableHeartbeatTimeout()),
-		electionTimer:  time.NewTimer(randomElectionTimeout()),
+		electionTimer:  time.NewTimer(randomElectionTimeout(me, 0)),
 	}
 
 	// initialize from state persisted before a crash
@@ -298,8 +298,9 @@ func stableHeartbeatTimeout() time.Duration {
 	return time.Duration(HeartbeatInterval) * time.Millisecond
 }
 
-func randomElectionTimeout() time.Duration {
+func randomElectionTimeout(peer, term int) time.Duration {
 	rand.Seed(time.Now().UnixNano()) // 避免活锁
 	timeout := rand.Intn(ElectionIntervalRight-ElectionIntervalLeft) + ElectionIntervalLeft
+	Debug(dTimer, "S%d:T%d Reset Election Timeout %dms", peer, term, timeout)
 	return time.Duration(timeout) * time.Millisecond
 }

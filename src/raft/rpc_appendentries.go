@@ -44,7 +44,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.currentTerm, rf.votedFor = args.Term, -1
 	}
 	rf.changeState(StateFollower)
-	rf.electionTimer.Reset(randomElectionTimeout())
+	rf.electionTimer.Reset(randomElectionTimeout(rf.me, rf.currentTerm))
 
 	// 此时args.Term >= rf.currentTerm，该HeartBeat有效
 	if !rf.matchLog(args.PrevLogTerm, args.PrevLogIndex) {

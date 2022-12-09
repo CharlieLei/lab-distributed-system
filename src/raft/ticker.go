@@ -12,7 +12,7 @@ func (rf *Raft) ticker() {
 				rf.changeState(StateCandidate)
 				rf.currentTerm += 1
 				rf.startElection()
-				rf.electionTimer.Reset(randomElectionTimeout())
+				rf.electionTimer.Reset(randomElectionTimeout(rf.me, rf.currentTerm))
 			}
 			rf.mu.Unlock()
 		case <-rf.heartbeatTimer.C:
@@ -53,7 +53,7 @@ func (rf *Raft) startElection() {
 						rf.changeState(StateFollower)
 						rf.currentTerm, rf.votedFor = reply.Term, -1
 						rf.persist()
-						rf.electionTimer.Reset(randomElectionTimeout())
+						rf.electionTimer.Reset(randomElectionTimeout(rf.me, rf.currentTerm))
 					} else if reply.VoteGranted {
 						grantedVote += 1
 						if grantedVote > len(rf.peers)/2 {
@@ -118,7 +118,7 @@ func (rf *Raft) appendEntriesHandler(peer int) {
 					rf.changeState(StateFollower)
 					rf.currentTerm, rf.votedFor = reply.Term, -1
 					rf.persist()
-					rf.electionTimer.Reset(randomElectionTimeout())
+					rf.electionTimer.Reset(randomElectionTimeout(rf.me, rf.currentTerm))
 				} else if reply.Success {
 					// If successful: update nextIndex and matchIndex for follower
 					// CAUTION: 可能该消息返回时，rf.log已经变化了，所以rf.nextIndex不能加len(rf.log)
@@ -191,7 +191,7 @@ func (rf *Raft) installSnapshotHandler(peer int) {
 					rf.changeState(StateFollower)
 					rf.currentTerm, rf.votedFor = reply.Term, -1
 					rf.persist()
-					rf.electionTimer.Reset(randomElectionTimeout())
+					rf.electionTimer.Reset(randomElectionTimeout(rf.me, rf.currentTerm))
 				} else {
 					rf.nextIndex[receiver] = max(rf.nextIndex[receiver], args.LastIncludedIndex+1)
 				}

@@ -33,6 +33,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	if args.Term > rf.currentTerm {
+		if rf.state == StateLeader {
+			// 若args.Term > rf.currentTerm后
+			//    且该节点原来是leader，则它需要重置reset electionTimer，不然不能在选举中成为candidate
+			//    若该节点是follower，则需要看日志是否up-to-date来决定是否重置计时器
+			rf.electionTimer.Reset(randomElectionTimeout(rf.me, rf.currentTerm))
+		}
 		rf.changeState(StateFollower)
 		rf.currentTerm, rf.votedFor = args.Term, -1
 	}
@@ -41,7 +47,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	rf.votedFor = args.CandidateId
-	rf.electionTimer.Reset(randomElectionTimeout())
+	rf.electionTimer.Reset(randomElectionTimeout(rf.me, rf.currentTerm))
 	reply.Term, reply.VoteGranted = rf.currentTerm, true
 }
 
