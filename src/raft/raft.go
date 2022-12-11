@@ -27,6 +27,7 @@ import (
 	"time"
 
 	//	"6.824/labgob"
+	"6.824/debug"
 	"6.824/labrpc"
 )
 
@@ -92,7 +93,7 @@ func (rf *Raft) persist() {
 	// Your code here (2C).
 	data := rf.encodeState()
 	rf.persister.SaveRaftState(data)
-	Debug(dPersist, "S%d:T%d Persist State, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}",
+	debug.Debug(debug.DPersist, "S%d:T%d Persist State, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}",
 		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
 }
 
@@ -108,7 +109,7 @@ func (rf *Raft) readPersist(data []byte) {
 	var votedFor int
 	var logs []Entry
 	if d.Decode(&currentTerm) != nil || d.Decode(&votedFor) != nil || d.Decode(&logs) != nil {
-		Debug(dError, "S%d:T%d Cannot Read Persist", rf.me, rf.currentTerm)
+		debug.Debug(debug.DError, "S%d:T%d Cannot Read Persist", rf.me, rf.currentTerm)
 	} else {
 		rf.currentTerm, rf.votedFor, rf.logs = currentTerm, votedFor, logs
 	}
@@ -134,7 +135,7 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	rf.commitIndex, rf.lastApplied = lastIncludedIndex, lastIncludedIndex
 	// 被调用CondInstallSnapshot是不具有最新快照的节点，需要保存快照到本地
 	rf.persister.SaveStateAndSnapshot(rf.encodeState(), snapshot)
-	Debug(dSnap, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} CondInstallSnapshot, AFTER Accept Snapshot{%d %d}",
+	debug.Debug(debug.DSnap, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} CondInstallSnapshot, AFTER Accept Snapshot{%d %d}",
 		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), lastIncludedIndex, lastIncludedTerm)
 	return true
 }
@@ -149,14 +150,14 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	defer rf.mu.Unlock()
 	snapshotIdx := rf.getFirstLog().Index
 	if index <= snapshotIdx {
-		Debug(dSnap, "S%d:T%d Reject Snapshot %d as Current SnapshotIdx %d is larger",
+		debug.Debug(debug.DSnap, "S%d:T%d Reject Snapshot %d as Current SnapshotIdx %d is larger",
 			rf.me, rf.currentTerm, index, snapshotIdx)
 		return
 	}
 	rf.logs = rf.logs[index-snapshotIdx:] // 第0个用来记录快照的lastIncludedIndex和lastIncludedTerm
 	rf.logs[0].Command = nil
 	rf.persister.SaveStateAndSnapshot(rf.encodeState(), snapshot)
-	Debug(dSnap, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} AFTER Install Snapshot %d",
+	debug.Debug(debug.DSnap, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} AFTER Install Snapshot %d",
 		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), index)
 }
 
@@ -182,7 +183,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		entry := Entry{command, rf.currentTerm, rf.getLastLog().Index + 1}
 		rf.logs = append(rf.logs, entry)
 		rf.persist()
-		Debug(dLeader, "S%d:T%d Start Entry %v", rf.me, rf.currentTerm, command)
+		debug.Debug(debug.DLeader, "S%d:T%d Start Entry %v", rf.me, rf.currentTerm, command)
 		return rf.getLastLog().Index, rf.currentTerm, true
 	}
 }
@@ -241,7 +242,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// logs的第0项是dummy，用来存快照的lastIncludedIndex和lastIncludedTerm
 	rf.commitIndex, rf.lastApplied = rf.logs[0].Index, rf.logs[0].Index
 
-	Debug(dInfo, "S%d:T%d {%v,cIdx %d,lApp %d,1Log %v,-1Log %v} initialize",
+	debug.Debug(debug.DInfo, "S%d:T%d {%v,cIdx %d,lApp %d,1Log %v,-1Log %v} initialize",
 		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
 
 	// start ticker goroutine to start elections
@@ -253,7 +254,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 }
 
 func (rf *Raft) changeState(newState NodeState) {
-	Debug(dWarn, "S%d:T%d %v -> %v", rf.me, rf.currentTerm, rf.state, newState)
+	debug.Debug(debug.DWarn, "S%d:T%d %v -> %v", rf.me, rf.currentTerm, rf.state, newState)
 	rf.state = newState
 	if newState == StateLeader {
 		// initialized to leader last log index + 1
@@ -301,6 +302,6 @@ func stableHeartbeatTimeout() time.Duration {
 func randomElectionTimeout(peer, term int) time.Duration {
 	rand.Seed(time.Now().UnixNano()) // 避免活锁
 	timeout := rand.Intn(ElectionIntervalRight-ElectionIntervalLeft) + ElectionIntervalLeft
-	Debug(dTimer, "S%d:T%d Reset Election Timeout %dms", peer, term, timeout)
+	debug.Debug(debug.DTimer, "S%d:T%d Reset Election Timeout %dms", peer, term, timeout)
 	return time.Duration(timeout) * time.Millisecond
 }

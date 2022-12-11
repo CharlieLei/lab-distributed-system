@@ -1,5 +1,7 @@
 package raft
 
+import "6.824/debug"
+
 // as each Raft peer becomes aware that successive log entries are
 // committed, the peer should send an ApplyMsg to the service (or
 // tester) on the same server, via the applyCh passed to Make(). set
@@ -29,7 +31,7 @@ func (rf *Raft) applier() {
 		}
 		commitIdx, lastApplied := rf.commitIndex, rf.lastApplied
 		entries := make([]Entry, commitIdx-lastApplied)
-		Debug(dInfo, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} Applier Copy Entries{len %d}",
+		debug.Debug(debug.DInfo, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} Applier Copy Entries{len %d}",
 			rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), len(entries))
 		copy(entries, rf.getLogSlice(lastApplied+1, commitIdx+1)) // logs[lastApplied+1,...,commitIdx]
 		rf.mu.Unlock()
@@ -41,7 +43,7 @@ func (rf *Raft) applier() {
 			}
 		}
 		rf.mu.Lock()
-		Debug(dCommit, "S%d:T%d Apply Entry[%d:%d]", rf.me, rf.currentTerm, lastApplied+1, commitIdx)
+		debug.Debug(debug.DCommit, "S%d:T%d Apply Entry[%d:%d]", rf.me, rf.currentTerm, lastApplied+1, commitIdx)
 		// CAUTION: 可能此时的rf.commitIdx已经改变，与commitIdx变量中的值不同
 		//          也有可能在将ApplyMsg送入applyCh时，该节点收到leader的快照，此快照远比此次apply的日志要新，此时lastApplied已经根据快照修改
 		rf.lastApplied = max(commitIdx, rf.lastApplied)

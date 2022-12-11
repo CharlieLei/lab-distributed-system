@@ -1,6 +1,9 @@
 package raft
 
-import "fmt"
+import (
+	"6.824/debug"
+	"fmt"
+)
 
 type AppendEntriesArgs struct {
 	Term         int
@@ -33,7 +36,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer rf.persist()
-	defer Debug(dClient, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} BEFORE AppArgs%v, AppRply%v",
+	defer debug.Debug(debug.DClient, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} BEFORE AppArgs%v, AppRply%v",
 		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), args.tostring(), reply)
 
 	if args.Term < rf.currentTerm {

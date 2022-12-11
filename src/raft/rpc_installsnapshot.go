@@ -1,6 +1,9 @@
 package raft
 
-import "fmt"
+import (
+	"6.824/debug"
+	"fmt"
+)
 
 type InstallSnapshotArgs struct {
 	Term              int
@@ -21,7 +24,7 @@ func (args *InstallSnapshotArgs) tostring() string {
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	defer Debug(dSnap, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} BEFORE SnapArgs%v, AppRply%v",
+	defer debug.Debug(debug.DSnap, "S%d:T%d {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v} BEFORE SnapArgs%v, AppRply%v",
 		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), args.tostring(), reply)
 
 	// 1. Reply immediately if term < currentTerm

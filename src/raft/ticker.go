@@ -1,5 +1,7 @@
 package raft
 
+import "6.824/debug"
+
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
 func (rf *Raft) ticker() {
@@ -8,7 +10,7 @@ func (rf *Raft) ticker() {
 		case <-rf.electionTimer.C:
 			rf.mu.Lock()
 			if rf.state == StateFollower || rf.state == StateCandidate {
-				Debug(dTimer, "S%d:T%d Election Timer", rf.me, rf.currentTerm)
+				debug.Debug(debug.DTimer, "S%d:T%d Election Timer", rf.me, rf.currentTerm)
 				rf.changeState(StateCandidate)
 				rf.currentTerm += 1
 				rf.startElection()
@@ -18,7 +20,7 @@ func (rf *Raft) ticker() {
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
 			if rf.state == StateLeader {
-				Debug(dTimer, "S%d:T%d Heartbeat Timer", rf.me, rf.currentTerm)
+				debug.Debug(debug.DTimer, "S%d:T%d Heartbeat Timer", rf.me, rf.currentTerm)
 				rf.broadcastHeartbeat()
 				rf.heartbeatTimer.Reset(stableHeartbeatTimeout())
 			}
@@ -28,7 +30,7 @@ func (rf *Raft) ticker() {
 }
 
 func (rf *Raft) startElection() {
-	Debug(dVote, "S%d:T%d Start Election, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}",
+	debug.Debug(debug.DVote, "S%d:T%d Start Election, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}",
 		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
 	rf.votedFor = rf.me
 	grantedVote := 1
@@ -57,17 +59,17 @@ func (rf *Raft) startElection() {
 					} else if reply.VoteGranted {
 						grantedVote += 1
 						if grantedVote > len(rf.peers)/2 {
-							Debug(dVote, "S%d:T%d Granted Majority Vote", rf.me, rf.currentTerm)
+							debug.Debug(debug.DVote, "S%d:T%d Granted Majority Vote", rf.me, rf.currentTerm)
 							rf.changeState(StateLeader)
 							rf.broadcastHeartbeat()
 							rf.heartbeatTimer.Reset(stableHeartbeatTimeout())
 						}
 					} else {
 						if !reply.VoteGranted {
-							Debug(dDrop, "S%d:T%d ReqRply from S%d, not grant vote",
+							debug.Debug(debug.DDrop, "S%d:T%d ReqRply from S%d, not grant vote",
 								rf.me, rf.currentTerm, receiver)
 						} else {
-							Debug(dDrop, "S%d:T%d ReqRply from S%d, reply.Term <= rf.currentTerm",
+							debug.Debug(debug.DDrop, "S%d:T%d ReqRply from S%d, reply.Term <= rf.currentTerm",
 								rf.me, rf.currentTerm, receiver, reply.Term, rf.currentTerm)
 						}
 					}
@@ -78,7 +80,7 @@ func (rf *Raft) startElection() {
 }
 
 func (rf *Raft) broadcastHeartbeat() {
-	Debug(dTrace, "S%d:T%d Start Broadcast Heartbeat, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}",
+	debug.Debug(debug.DTrace, "S%d:T%d Start Broadcast Heartbeat, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}",
 		rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog())
 	for peer := range rf.peers {
 		if peer == rf.me {
@@ -86,7 +88,7 @@ func (rf *Raft) broadcastHeartbeat() {
 		}
 		if rf.nextIndex[peer] <= rf.getFirstLog().Index {
 			// 先发快照，等下一次heartbeat再appendEntries
-			Debug(dSnap, "S%d:T%d InstallSnapshot to S%d, nextIndex[%d] %d <= 1Log%v",
+			debug.Debug(debug.DSnap, "S%d:T%d InstallSnapshot to S%d, nextIndex[%d] %d <= 1Log%v",
 				rf.me, rf.currentTerm, peer, peer, rf.nextIndex[peer], rf.getFirstLog())
 			rf.installSnapshotHandler(peer)
 		} else {
