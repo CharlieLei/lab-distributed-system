@@ -7,14 +7,17 @@ import (
 	"6.824/raft"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
+const ClientRequestTimeout = 100 * time.Millisecond
+
 type Command struct {
-	Key       string
-	Value     string
-	Op        OpType
 	ClientId  int64
 	CommandId int
+	Op        OpType
+	Key       string
+	Value     string
 }
 
 type Session struct {
@@ -34,14 +37,16 @@ type KVServer struct {
 	// Your definitions here.
 	kvmap          map[string]string
 	clientSessions map[int64]Session
-	notifyChans    map[int64]chan *CommandReply
+	notifyChans    map[int]chan *CommandReply // 键值是对应日志的index，不是clientId
 }
 
 func (kv *KVServer) ExecCommand(args *CommandArgs, reply *CommandReply) {
 	kv.mu.Lock()
-	if kv.isDuplicateRequest(args.ClientId, args.CommandId) {
+	if args.Op != OpGet && kv.isDuplicateRequest(args.ClientId, args.CommandId) {
+		debug.Debug(debug.KVServer, "S%v Duplicate Command args%v", kv.me, args)
 		lastReply := kv.clientSessions[args.ClientId].lastReply
 		reply.Err, reply.Value = lastReply.Err, lastReply.Value
+		debug.Debug(debug.KVServer, "S%v Reply Command args %v, rply {%v %%v %v %v}", kv.me, args, reply.ClientId, reply.CommandId, reply.Err, len(reply.Value))
 		kv.mu.Unlock()
 		return
 	}
@@ -54,20 +59,31 @@ func (kv *KVServer) ExecCommand(args *CommandArgs, reply *CommandReply) {
 	}
 	kv.mu.Unlock()
 
-	_, _, isLeader := kv.rf.Start(op)
+	logIdx, _, isLeader := kv.rf.Start(op)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
 	}
 
 	kv.mu.Lock()
-	debug.Debug(debug.KVServer, "S%v Command Has Started args%v, rply%v", kv.me, args, reply)
-	ch := kv.getNotifyChan(args.ClientId)
+	debug.Debug(debug.KVServer, "S%v Command Has Started args%v", kv.me, args)
+	ch := kv.getNotifyChan(logIdx)
 	kv.mu.Unlock()
 	select {
 	case result := <-ch:
+		reply.ClientId, reply.CommandId = result.ClientId, result.CommandId
 		reply.Err, reply.Value = result.Err, result.Value
+	case <-time.After(ClientRequestTimeout):
+		reply.Err = ErrTimeout
 	}
+	kv.mu.Lock()
+	debug.Debug(debug.KVServer, "S%v Reply Command args %v, rply {%v %v %v %v}", kv.me, args, reply.ClientId, reply.CommandId, reply.Err, len(reply.Value))
+	kv.mu.Unlock()
+	go func() {
+		kv.mu.Lock()
+		kv.deleteOutdatedNotifyChan(logIdx)
+		kv.mu.Unlock()
+	}()
 }
 
 func (kv *KVServer) applier() {
@@ -77,12 +93,27 @@ func (kv *KVServer) applier() {
 			if message.CommandValid {
 				kv.mu.Lock()
 				command := message.Command.(Command)
-				debug.Debug(debug.KVServer, "S%v Apply Command%v", kv.me, command)
-				reply := kv.applyLog(command)
-				kv.clientSessions[command.ClientId] = Session{command.CommandId, reply}
-				ch := kv.getNotifyChan(command.ClientId)
+
+				var reply *CommandReply
+				if command.Op != OpGet && kv.isDuplicateRequest(command.ClientId, command.CommandId) {
+					reply = kv.clientSessions[command.ClientId].lastReply
+					debug.Debug(debug.KVServer, "S%v Apply Duplicate Command %v Result {%v %v %v, %v}", kv.me, command, reply.ClientId, reply.CommandId, reply.Err, len(reply.Value))
+				} else {
+					reply = kv.applyLog(command)
+					if command.Op != OpGet {
+						kv.clientSessions[command.ClientId] = Session{command.CommandId, reply}
+					}
+				}
+
+				if currentTerm, isLeader := kv.rf.GetState(); currentTerm == message.CommandTerm && isLeader {
+					ch := kv.getNotifyChan(message.CommandIndex)
+					ch <- reply
+				}
 				kv.mu.Unlock()
-				ch <- reply
+			} else if message.SnapshotValid {
+				kv.mu.Lock()
+
+				kv.mu.Unlock()
 			}
 		}
 	}
@@ -98,24 +129,33 @@ func (kv *KVServer) applyLog(command Command) *CommandReply {
 	var reply CommandReply
 	if command.Op == OpPut {
 		kv.kvmap[command.Key] = command.Value
+		reply.Value = kv.kvmap[command.Key]
+		debug.Debug(debug.KVServer, "S%d Command %v Put Value to KVMAP[%v]: %v", kv.me, command, command.Key, len(kv.kvmap[command.Key]))
 	} else if command.Op == OpAppend {
 		kv.kvmap[command.Key] += command.Value
+		reply.Value = kv.kvmap[command.Key]
+		debug.Debug(debug.KVServer, "S%d Command %v Append Value to KVMAP[%v]: %v", kv.me, command, command.Key, len(kv.kvmap[command.Key]))
 	} else if command.Op == OpGet {
 		if val, ok := kv.kvmap[command.Key]; ok {
 			reply.Value = val
 		} else {
 			reply.Value = ""
 		}
+		debug.Debug(debug.KVServer, "S%d Command %v Get Value to KVMAP[%v]: %v", kv.me, command, command.Key, len(reply.Value))
 	}
-	reply.Err = OK
+	reply.ClientId, reply.CommandId, reply.Err = command.ClientId, command.CommandId, OK
 	return &reply
 }
 
-func (kv *KVServer) getNotifyChan(clientId int64) chan *CommandReply {
-	if _, ok := kv.notifyChans[clientId]; !ok {
-		kv.notifyChans[clientId] = make(chan *CommandReply, 1)
+func (kv *KVServer) getNotifyChan(logIndex int) chan *CommandReply {
+	if _, ok := kv.notifyChans[logIndex]; !ok {
+		kv.notifyChans[logIndex] = make(chan *CommandReply, 1)
 	}
-	return kv.notifyChans[clientId]
+	return kv.notifyChans[logIndex]
+}
+
+func (kv *KVServer) deleteOutdatedNotifyChan(logIndex int) {
+	delete(kv.notifyChans, logIndex)
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -164,7 +204,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.kvmap = make(map[string]string)
 	kv.clientSessions = make(map[int64]Session)
-	kv.notifyChans = make(map[int64]chan *CommandReply)
+	kv.notifyChans = make(map[int]chan *CommandReply)
 
 	// You may need initialization code here.
 

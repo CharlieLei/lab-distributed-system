@@ -49,8 +49,6 @@ func (ck *Clerk) Append(key string, value string) {
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
 func (ck *Clerk) sendCommand(key string, value string, op OpType) string {
-	debug.Debug(debug.KVClient, "C%d Send Command %d {%v \"%v\":\"%v\"} To S%d",
-		ck.clientId, ck.commandId, op, key, value, ck.leaderId)
 	args := CommandArgs{
 		ClientId:  ck.clientId,
 		CommandId: ck.commandId,
@@ -58,17 +56,18 @@ func (ck *Clerk) sendCommand(key string, value string, op OpType) string {
 		Value:     value,
 		Op:        op,
 	}
+	debug.Debug(debug.KVClient, "C%d Send Command args %v", ck.clientId, args)
 	for {
 		var reply CommandReply
-		if !ck.servers[ck.leaderId].Call("KVServer.ExecCommand", &args, &reply) || reply.Err == ErrWrongLeader {
-			//Debug(dClient, "C%d Fail to Send Command %d To S%d, rply %v",
-			//	ck.clientId, ck.commandId, ck.leaderId, reply)
+		if !ck.servers[ck.leaderId].Call("KVServer.ExecCommand", &args, &reply) ||
+			reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
+			//debug.Debug(debug.DWarn, "C%d Send Command To S%d Fail args %v, rply %v",
+			//	ck.clientId, ck.leaderId, args, reply)
 			ck.leaderId = (ck.leaderId + 1) % len(ck.servers)
 			continue
-			//return ""
 		}
-		debug.Debug(debug.KVClient, "C%d Success to Send Command %d To S%d, rply %v",
-			ck.clientId, ck.commandId, ck.leaderId, reply)
+		debug.Debug(debug.KVClient, "C%d Send Command To S%d Success args %v, rply {%v, %v}",
+			ck.clientId, ck.leaderId, args, reply.Err, len(reply.Value))
 		ck.commandId++
 		return reply.Value
 	}
