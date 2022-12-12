@@ -18,7 +18,7 @@ const (
 	DError   logTopic = "ERRO"
 	DInfo    logTopic = "INFO"
 	DLeader  logTopic = "LEAD"
-	DLog     logTopic = "LOG1"
+	DState   logTopic = "STAT"
 	DLog2    logTopic = "LOG2"
 	DPersist logTopic = "PERS"
 	DSnap    logTopic = "SNAP"
