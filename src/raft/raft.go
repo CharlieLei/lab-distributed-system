@@ -184,6 +184,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.logs = append(rf.logs, entry)
 		rf.persist()
 		debug.Debug(debug.DLeader, "S%d:T%d Start Entry %v", rf.me, rf.currentTerm, command)
+		// Lab3A中TestSpeed3A测试要求Client请求的响应时间小于1/3ms，但由于测试中Client不能并发发送请求
+		// 所以raft需要在收到消息后立刻发送心跳，否则就会让请求响应时间接近心跳间隔
+		rf.heartbeatTimer.Reset(0)
 		return rf.getLastLog().Index, rf.currentTerm, true
 	}
 }
@@ -254,7 +257,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 }
 
 func (rf *Raft) changeState(newState NodeState) {
-	debug.Debug(debug.DWarn, "S%d:T%d %v -> %v", rf.me, rf.currentTerm, rf.state, newState)
+	if newState == rf.state {
+		return
+	}
+	debug.Debug(debug.DState, "S%d:T%d %v -> %v", rf.me, rf.currentTerm, rf.state, newState)
 	rf.state = newState
 	if newState == StateLeader {
 		// initialized to leader last log index + 1
