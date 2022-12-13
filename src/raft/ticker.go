@@ -117,7 +117,9 @@ func (rf *Raft) appendEntriesHandler(peer int) {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 			if rf.currentTerm == args.Term && rf.state == StateLeader {
-				if reply.Term > rf.currentTerm {
+				if reply.Term < rf.currentTerm {
+					return
+				} else if reply.Term > rf.currentTerm {
 					// 当前term已经比当前节点所在term大，该节点太久没收到最新heartbeat，仍以为自己是candidate或leader
 					rf.changeState(StateFollower)
 					rf.currentTerm, rf.votedFor = reply.Term, -1
@@ -127,18 +129,22 @@ func (rf *Raft) appendEntriesHandler(peer int) {
 					// If successful: update nextIndex and matchIndex for follower
 					// CAUTION: 可能该消息返回时，rf.log已经变化了，所以rf.nextIndex不能加len(rf.log)
 					//          同样不能直接在rf.nextIndex上加，因为可能leader发送了两个heartbeat要求follower加上新entry，此时就会返回两次；若直接在rf.nextIndex上加，则会加两次
-					rf.nextIndex[receiver] = args.PrevLogIndex + len(args.Entries) + 1
+					//          也可能此时返回的消息是同个term但已经是out-dated的回复，虽然返回success，但此时PrevLogIndex和Entries都已经过期
+					rf.nextIndex[receiver] = max(args.PrevLogIndex+len(args.Entries)+1, rf.nextIndex[receiver])
 					rf.matchIndex[receiver] = rf.nextIndex[receiver] - 1
 					// If there exists an N such that N > commitIndex, a majority of matchIndex[i] >= N,
 					// and log[N].term == currentTerm: set commitIndex = N
 					rf.commitIndex = rf.getNewCommitIndex()
 					rf.applyCond.Signal()
-					debug.Debug(debug.DLeader, "S%d:T%d Recv Success AppRply, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}, args %v, rply %v, nextIdx[%d] = %d",
+					debug.Debug(debug.DLeader, "S%d:T%d Recv Success AppRply, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}, args %v, rply %v, nextIndex[%d] = %d",
 						rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(),
 						args.tostring(), reply, receiver, rf.nextIndex[receiver])
 				} else if !reply.Success {
 					if reply.ConflictTerm == -1 {
 						rf.nextIndex[receiver] = reply.ConflictIndex
+						debug.Debug(debug.DWarn, "S%d:T%d Recv Fail AppRply, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}, args %v, rply %v, nextIndex[%d] = %d, ConflictIndex == -1",
+							rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(),
+							args.tostring(), reply, receiver, rf.nextIndex[receiver])
 					} else {
 						termMatchIdx := -1
 						for idx := rf.getLastLog().Index + 1; idx > rf.getFirstLog().Index+1; idx-- {
@@ -149,8 +155,14 @@ func (rf *Raft) appendEntriesHandler(peer int) {
 						}
 						if termMatchIdx == -1 {
 							rf.nextIndex[receiver] = reply.ConflictIndex
+							debug.Debug(debug.DWarn, "S%d:T%d Recv Fail AppRply, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}, args %v, rply %v, nextIndex[%d] = %d, Term Not Match",
+								rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(),
+								args.tostring(), reply, receiver, rf.nextIndex[receiver])
 						} else {
 							rf.nextIndex[receiver] = termMatchIdx
+							debug.Debug(debug.DWarn, "S%d:T%d Recv Fail AppRply, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}, args %v, rply %v, nextIndex[%d] = %d, Term Match",
+								rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(),
+								args.tostring(), reply, receiver, rf.nextIndex[receiver])
 						}
 					}
 				}
