@@ -122,6 +122,15 @@ func (rf *Raft) CondInstallSnapshot(lastIncludedTerm int, lastIncludedIndex int,
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
+	if lastIncludedIndex <= rf.commitIndex {
+		// 和commitIndex比较的原因：
+		//    该函数只会用在leader向follower发送快照时使用，因此当commitIndex更大时
+		//    说明该follower有更新的日志，不需要也不应该使用leader发来的快照
+		debug.Debug(debug.DSnap, "S%d:T%d Reject CondInstallSnapshot %d as Current Logs is more up-to-date, lastIncludedIdx %d <= commitIdx %d",
+			rf.me, rf.currentTerm, lastIncludedIndex, lastIncludedIndex, rf.commitIndex)
+		return false
+	}
+
 	if lastIncludedIndex > rf.getLastLog().Index {
 		// 快照比当前节点中的所有日志项都更加新
 		rf.logs = make([]Entry, 1)

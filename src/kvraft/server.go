@@ -5,6 +5,7 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
+	"bytes"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,8 +22,8 @@ type Command struct {
 }
 
 type Session struct {
-	lastCommandId int
-	lastReply     *CommandReply
+	LastCommandId int
+	LastReply     CommandReply
 }
 
 type KVServer struct {
@@ -37,14 +38,16 @@ type KVServer struct {
 	// Your definitions here.
 	kvmap          map[string]string
 	clientSessions map[int64]Session
-	notifyChans    map[int]chan *CommandReply // 键值是对应日志的index，不是clientId
+	notifyChans    map[int]chan CommandReply // 键值是对应日志的index，不是clientId
+	persister      *raft.Persister
+	lastApplied    int
 }
 
 func (kv *KVServer) ExecCommand(args *CommandArgs, reply *CommandReply) {
 	kv.mu.Lock()
 	if args.Op != OpGet && kv.isDuplicateRequest(args.ClientId, args.CommandId) {
 		debug.Debug(debug.KVServer, "S%v Duplicate Command args%v", kv.me, args)
-		lastReply := kv.clientSessions[args.ClientId].lastReply
+		lastReply := kv.clientSessions[args.ClientId].LastReply
 		reply.Err, reply.Value = lastReply.Err, lastReply.Value
 		debug.Debug(debug.KVServer, "S%v Reply Command args %v, rply {%v %%v %v %v}", kv.me, args, reply.ClientId, reply.CommandId, reply.Err, len(reply.Value))
 		kv.mu.Unlock()
@@ -77,13 +80,10 @@ func (kv *KVServer) ExecCommand(args *CommandArgs, reply *CommandReply) {
 		reply.Err = ErrTimeout
 	}
 	kv.mu.Lock()
+	// delete outdated notifyChan
+	delete(kv.notifyChans, logIdx)
 	debug.Debug(debug.KVServer, "S%v Reply Command args %v, rply {%v %v %v %v}", kv.me, args, reply.ClientId, reply.CommandId, reply.Err, len(reply.Value))
 	kv.mu.Unlock()
-	go func() {
-		kv.mu.Lock()
-		kv.deleteOutdatedNotifyChan(logIdx)
-		kv.mu.Unlock()
-	}()
 }
 
 func (kv *KVServer) applier() {
@@ -94,9 +94,16 @@ func (kv *KVServer) applier() {
 				kv.mu.Lock()
 				command := message.Command.(Command)
 
-				var reply *CommandReply
+				if kv.lastApplied >= message.CommandIndex {
+					debug.Debug(debug.KVServer, "S%v Recv Outdated Msg %v Due to newer Snapshot installed, Not Apply, lastApplied %v", kv.me, message, kv.lastApplied)
+					kv.mu.Unlock()
+					continue
+				}
+				kv.lastApplied = message.CommandIndex
+
+				var reply CommandReply
 				if command.Op != OpGet && kv.isDuplicateRequest(command.ClientId, command.CommandId) {
-					reply = kv.clientSessions[command.ClientId].lastReply
+					reply = kv.clientSessions[command.ClientId].LastReply
 					debug.Debug(debug.KVServer, "S%v Apply Duplicate Command %v Result {%v %v %v, %v}", kv.me, command, reply.ClientId, reply.CommandId, reply.Err, len(reply.Value))
 				} else {
 					reply = kv.applyLog(command)
@@ -109,10 +116,24 @@ func (kv *KVServer) applier() {
 					ch := kv.getNotifyChan(message.CommandIndex)
 					ch <- reply
 				}
+
+				if kv.needSnapshot() {
+					debug.Debug(debug.KVSnap, "S%d KVServer Take Snapshot, Msg %v, KVMAP[0]: %v",
+						kv.me, message, len(kv.kvmap["0"]))
+					snapshot := kv.takeSnapshot()
+					kv.rf.Snapshot(message.CommandIndex, snapshot)
+				}
 				kv.mu.Unlock()
 			} else if message.SnapshotValid {
 				kv.mu.Lock()
-
+				debug.Debug(debug.KVSnap, "S%d KVServer Try Install Snapshot %d, KVMAP[0]: %v",
+					kv.me, message.SnapshotIndex, len(kv.kvmap["0"]))
+				if kv.rf.CondInstallSnapshot(message.SnapshotTerm, message.SnapshotIndex, message.Snapshot) {
+					kv.installSnapshot(message.Snapshot)
+					kv.lastApplied = message.SnapshotIndex
+					debug.Debug(debug.KVSnap, "S%d KVServer Install Snapshot %d Finished, KVMAP[0]: %v",
+						kv.me, message.SnapshotIndex, len(kv.kvmap["0"]))
+				}
 				kv.mu.Unlock()
 			}
 		}
@@ -122,10 +143,10 @@ func (kv *KVServer) applier() {
 func (kv *KVServer) isDuplicateRequest(clientId int64, commandId int) bool {
 	// 不可能存在比lastCommandId还小；哪怕有，由于client已经发出commandId更大的command，因此client也已经不会接受该回复了
 	session, ok := kv.clientSessions[clientId]
-	return ok && commandId <= session.lastCommandId
+	return ok && commandId <= session.LastCommandId
 }
 
-func (kv *KVServer) applyLog(command Command) *CommandReply {
+func (kv *KVServer) applyLog(command Command) CommandReply {
 	var reply CommandReply
 	if command.Op == OpPut {
 		kv.kvmap[command.Key] = command.Value
@@ -144,18 +165,42 @@ func (kv *KVServer) applyLog(command Command) *CommandReply {
 		debug.Debug(debug.KVServer, "S%d Command %v Get Value to KVMAP[%v]: %v", kv.me, command, command.Key, len(reply.Value))
 	}
 	reply.ClientId, reply.CommandId, reply.Err = command.ClientId, command.CommandId, OK
-	return &reply
+	return reply
 }
 
-func (kv *KVServer) getNotifyChan(logIndex int) chan *CommandReply {
+func (kv *KVServer) getNotifyChan(logIndex int) chan CommandReply {
 	if _, ok := kv.notifyChans[logIndex]; !ok {
-		kv.notifyChans[logIndex] = make(chan *CommandReply, 1)
+		kv.notifyChans[logIndex] = make(chan CommandReply, 1)
 	}
 	return kv.notifyChans[logIndex]
 }
 
-func (kv *KVServer) deleteOutdatedNotifyChan(logIndex int) {
-	delete(kv.notifyChans, logIndex)
+func (kv *KVServer) needSnapshot() bool {
+	return kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate
+}
+
+func (kv *KVServer) takeSnapshot() []byte {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(kv.kvmap)
+	e.Encode(kv.clientSessions)
+	snapshot := w.Bytes()
+	return snapshot
+}
+
+func (kv *KVServer) installSnapshot(snapshot []byte) {
+	if snapshot == nil || len(snapshot) < 1 {
+		return
+	}
+	r := bytes.NewBuffer(snapshot)
+	d := labgob.NewDecoder(r)
+	var kvmap map[string]string
+	var clientSessions map[int64]Session
+	if d.Decode(&kvmap) != nil || d.Decode(&clientSessions) != nil {
+		debug.Debug(debug.DError, "S%d KVServer Cannot Deserialize State", kv.me)
+	} else {
+		kv.kvmap, kv.clientSessions = kvmap, clientSessions
+	}
 }
 
 // the tester calls Kill() when a KVServer instance won't
@@ -204,7 +249,12 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	kv.kvmap = make(map[string]string)
 	kv.clientSessions = make(map[int64]Session)
-	kv.notifyChans = make(map[int]chan *CommandReply)
+	kv.notifyChans = make(map[int]chan CommandReply)
+	kv.persister = persister
+	kv.lastApplied = 0
+
+	snapshot := persister.ReadSnapshot()
+	kv.installSnapshot(snapshot)
 
 	// You may need initialization code here.
 

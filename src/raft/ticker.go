@@ -108,6 +108,8 @@ func (rf *Raft) appendEntriesHandler(peer int) {
 		LeaderCommit: rf.commitIndex,
 	}
 	copy(args.Entries, rf.getLogSlice(peerNextIdx, rf.getLastLog().Index+1))
+	debug.Debug(debug.DLeader, "S%d:T%d Send AppRply To S%d, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}, args %v",
+		rf.me, rf.currentTerm, peer, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(), args.tostring())
 
 	go func(receiver int) {
 		reply := AppendEntriesReply{}
@@ -131,6 +133,9 @@ func (rf *Raft) appendEntriesHandler(peer int) {
 					// and log[N].term == currentTerm: set commitIndex = N
 					rf.commitIndex = rf.getNewCommitIndex()
 					rf.applyCond.Signal()
+					debug.Debug(debug.DLeader, "S%d:T%d Recv Success AppRply, {%v, cIdx%d, lApp%d, 1Log%v, -1Log%v}, args %v, rply %v, nextIdx[%d] = %d",
+						rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.getFirstLog(), rf.getLastLog(),
+						args.tostring(), reply, receiver, rf.nextIndex[receiver])
 				} else if !reply.Success {
 					if reply.ConflictTerm == -1 {
 						rf.nextIndex[receiver] = reply.ConflictIndex

@@ -50,6 +50,18 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.electionTimer.Reset(randomElectionTimeout(rf.me, rf.currentTerm))
 
 	// 此时args.Term >= rf.currentTerm，该HeartBeat有效
+	if args.PrevLogIndex < rf.getFirstLog().Index {
+		// CAUTION: 在引入快照后，可能出现以下的情况：
+		//  leader发送了两次heartbeat，两次heartbeat相同
+		//  然而在follower收到并返回第一个heartbeat创建快照，将log截断
+		//  在follower收到的第二个heartbeat时，由于该heartbeat中prevLogIndex是旧的，因此prevLogIndex可能会在log被截断的部分中
+		//  从而出现错误，第二个heartbeat应该直接返回，并将返回term设为0，让leader认为这是一个过期的回复
+		debug.Debug(debug.DWarn, "S%d:T%d Recv Unexpected App From S%d due to prevLogIdx %d < 1Log.Idx %d",
+			rf.me, rf.currentTerm, args.LeaderId, args.PrevLogIndex, rf.getFirstLog().Index)
+		reply.Term, reply.Success = 0, false
+		return
+	}
+
 	if !rf.matchLog(args.PrevLogTerm, args.PrevLogIndex) {
 		// reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
 		reply.Term, reply.Success = rf.currentTerm, false
