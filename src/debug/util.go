@@ -19,7 +19,7 @@ const (
 	DInfo    logTopic = "INFO"
 	DLeader  logTopic = "LEAD"
 	DState   logTopic = "STAT"
-	DLog2    logTopic = "LOG2"
+	KVSnap   logTopic = "KVSNAP"
 	DPersist logTopic = "PERS"
 	DSnap    logTopic = "SNAP"
 	DTerm    logTopic = "TERM"

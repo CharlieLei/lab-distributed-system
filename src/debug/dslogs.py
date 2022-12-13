@@ -17,7 +17,7 @@ TOPICS = {
     "LEAD": "#d0b343",
     "TERM": "#70c43f",
     "STAT": "#4878bc",
-    "LOG2": "#398280",
+    "KVSNAP": "#398280",
     "CMIT": "#98719f",
     "PERS": "#d08341",
     "SNAP": "#FD971F",
