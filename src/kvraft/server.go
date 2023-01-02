@@ -18,8 +18,8 @@ type Command struct {
 }
 
 type Session struct {
-	LastCommandId int
-	LastReply     CommandReply
+	LastSequenceNum int
+	LastReply       CommandReply
 }
 
 type KVServer struct {
@@ -41,7 +41,7 @@ type KVServer struct {
 
 func (kv *KVServer) ExecCommand(args *CommandArgs, reply *CommandReply) {
 	kv.mu.Lock()
-	if args.Op != OpGet && kv.isDuplicateRequest(args.ClientId, args.CommandId) {
+	if !args.isReadOnly() && kv.isDuplicateRequest(args.ClientId, args.SequenceNum) {
 		debug.Debug(debug.KVServer, "S%v Duplicate Command args%v", kv.me, args)
 		lastReply := kv.clientSessions[args.ClientId].LastReply
 		reply.Err, reply.Value = lastReply.Err, lastReply.Value
@@ -90,13 +90,13 @@ func (kv *KVServer) applier() {
 				kv.lastApplied = message.CommandIndex
 
 				var reply CommandReply
-				if args.Op != OpGet && kv.isDuplicateRequest(args.ClientId, args.CommandId) {
+				if !args.isReadOnly() && kv.isDuplicateRequest(args.ClientId, args.SequenceNum) {
 					reply = kv.clientSessions[args.ClientId].LastReply
 					debug.Debug(debug.KVServer, "S%v Apply Duplicate Command %v Result {%v, %v}", kv.me, args, reply.Err, len(reply.Value))
 				} else {
 					kv.applyLog(args, &reply)
-					if args.Op != OpGet {
-						kv.clientSessions[args.ClientId] = Session{args.CommandId, reply}
+					if !args.isReadOnly() {
+						kv.clientSessions[args.ClientId] = Session{args.SequenceNum, reply}
 					}
 				}
 
@@ -231,10 +231,10 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	return kv
 }
 
-func (kv *KVServer) isDuplicateRequest(clientId int64, commandId int) bool {
+func (kv *KVServer) isDuplicateRequest(clientId int64, sequenceNum int) bool {
 	// 不可能存在比lastCommandId还小；哪怕有，由于client已经发出commandId更大的command，因此client也已经不会接受该回复了
 	session, ok := kv.clientSessions[clientId]
-	return ok && commandId <= session.LastCommandId
+	return ok && sequenceNum <= session.LastSequenceNum
 }
 
 func (kv *KVServer) getNotifyChan(logIndex int) chan CommandReply {
