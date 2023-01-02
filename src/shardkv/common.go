@@ -9,36 +9,37 @@ package shardkv
 // You will have to modify these definitions.
 //
 
+type ErrType string
+
 const (
-	OK             = "OK"
-	ErrNoKey       = "ErrNoKey"
-	ErrWrongGroup  = "ErrWrongGroup"
-	ErrWrongLeader = "ErrWrongLeader"
+	OK             ErrType = "OK"
+	ErrNoKey       ErrType = "ErrNoKey"
+	ErrTimeout     ErrType = "ErrTimeout"
+	ErrWrongGroup  ErrType = "ErrWrongGroup"
+	ErrWrongLeader ErrType = "ErrWrongLeader"
 )
 
-type Err string
+type OpType string
 
-// Put or Append
-type PutAppendArgs struct {
-	// You'll have to add definitions here.
-	Key   string
+const (
+	OpGet    OpType = "Get"
+	OpPut    OpType = "Put"
+	OpAppend OpType = "Append"
+)
+
+type CommandArgs struct {
+	ClientId    int64
+	SequenceNum int // 就是command的id
+	Op          OpType
+	Key         string
+	Value       string
+}
+
+type CommandReply struct {
+	Err   ErrType
 	Value string
-	Op    string // "Put" or "Append"
-	// You'll have to add definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
 }
 
-type PutAppendReply struct {
-	Err Err
-}
-
-type GetArgs struct {
-	Key string
-	// You'll have to add definitions here.
-}
-
-type GetReply struct {
-	Err   Err
-	Value string
+func (args *CommandArgs) isReadOnly() bool {
+	return args.Op == OpGet
 }
