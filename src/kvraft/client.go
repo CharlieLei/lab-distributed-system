@@ -3,10 +3,10 @@ package kvraft
 import (
 	"6.824/debug"
 	"6.824/labrpc"
+	"crypto/rand"
+	"math/big"
 	"time"
 )
-import "crypto/rand"
-import "math/big"
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
