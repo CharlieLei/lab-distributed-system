@@ -61,22 +61,22 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 }
 
 func (ck *Clerk) Get(key string) string {
-	args := &CommandArgs{}
+	args := &OperationArgs{}
 	args.Op, args.Key = OpGet, key
 	return ck.sendCommand(args)
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	args := &CommandArgs{}
+	args := &OperationArgs{}
 	args.Op, args.Key, args.Value = OpPut, key, value
 	ck.sendCommand(args)
 }
 func (ck *Clerk) Append(key string, value string) {
-	args := &CommandArgs{}
+	args := &OperationArgs{}
 	args.Op, args.Key, args.Value = OpAppend, key, value
 }
 
-func (ck *Clerk) sendCommand(args *CommandArgs) string {
+func (ck *Clerk) sendCommand(args *OperationArgs) string {
 	args.ClientId, args.SequenceNum = ck.clientId, ck.sequenceNum
 	for {
 		shard := key2shard(args.Key)
@@ -85,7 +85,7 @@ func (ck *Clerk) sendCommand(args *CommandArgs) string {
 			for range servers {
 				var reply CommandReply
 				srv := ck.make_end(servers[ck.leaderId])
-				ok := srv.Call("ShardKV.ExecCommand", args, &reply)
+				ok := srv.Call("ShardKV.ExecOperation", args, &reply)
 				if ok && reply.Err == OK {
 					ck.sequenceNum++
 					return reply.Value

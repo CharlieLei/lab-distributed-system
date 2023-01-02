@@ -5,6 +5,7 @@ import (
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
+	"6.824/shardctrler"
 	"bytes"
 	"sync"
 	"time"
@@ -12,11 +13,19 @@ import (
 
 const ClientRequestTimeout = 100 * time.Millisecond
 
+type CommandType string
+
+const (
+	CmdOperation CommandType = "Operation"
+	CmdConfig    CommandType = "Config"
+)
+
 type Command struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Args *CommandArgs
+	Type CommandType
+	Data interface{}
 }
 
 type Session struct {
@@ -36,24 +45,17 @@ type ShardKV struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	kvmap          map[string]string
+	mck            *shardctrler.Clerk
+	shards         map[int]*Shard // shardId -> pointer of Shard obj
 	clientSessions map[int64]Session
 	notifyChans    map[int]chan CommandReply
 	persister      *raft.Persister
 	lastApplied    int
+	currentCfg     *shardctrler.Config
 }
 
-func (kv *ShardKV) ExecCommand(args *CommandArgs, reply *CommandReply) {
-	kv.mu.Lock()
-	if !args.isReadOnly() && kv.isDuplicateRequest(args.ClientId, args.SequenceNum) {
-		lastReply := kv.clientSessions[args.ClientId].LastReply
-		reply.Err, reply.Value = lastReply.Err, lastReply.Value
-		kv.mu.Unlock()
-		return
-	}
-	kv.mu.Unlock()
-
-	logIdx, _, isLeader := kv.rf.Start(Command{args})
+func (kv *ShardKV) Execute(command Command, reply *CommandReply) {
+	logIdx, _, isLeader := kv.rf.Start(command)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
@@ -79,7 +81,6 @@ func (kv *ShardKV) applier() {
 	for message := range kv.applyCh {
 		if message.CommandValid {
 			kv.mu.Lock()
-			args := message.Command.(Command).Args
 
 			if kv.lastApplied >= message.CommandIndex {
 				kv.mu.Unlock()
@@ -88,13 +89,14 @@ func (kv *ShardKV) applier() {
 			kv.lastApplied = message.CommandIndex
 
 			var reply CommandReply
-			if !args.isReadOnly() && kv.isDuplicateRequest(args.ClientId, args.SequenceNum) {
-				reply = kv.clientSessions[args.ClientId].LastReply
-			} else {
-				reply = kv.applyLog(args)
-				if !args.isReadOnly() {
-					kv.clientSessions[args.ClientId] = Session{args.SequenceNum, reply}
-				}
+			command := message.Command.(Command)
+			switch command.Type {
+			case CmdOperation:
+				operation := command.Data.(OperationArgs)
+				reply = kv.applyOperation(&operation)
+			case CmdConfig:
+				nextCfg := command.Data.(shardctrler.Config)
+				reply = kv.applyConfig(&nextCfg)
 			}
 
 			currentTerm, isLeader := kv.rf.GetState()
@@ -119,26 +121,6 @@ func (kv *ShardKV) applier() {
 			panic("WRONG Message Valid Situation")
 		}
 	}
-}
-
-func (kv *ShardKV) applyLog(args *CommandArgs) CommandReply {
-	var reply CommandReply
-	switch args.Op {
-	case OpPut:
-		kv.kvmap[args.Key] = args.Value
-		reply.Value = kv.kvmap[args.Key]
-	case OpAppend:
-		kv.kvmap[args.Key] += args.Value
-		reply.Value = kv.kvmap[args.Key]
-	case OpGet:
-		if val, ok := kv.kvmap[args.Key]; ok {
-			reply.Value = val
-		} else {
-			reply.Value = ""
-		}
-	}
-	reply.Err = OK
-	return reply
 }
 
 // the tester calls Kill() when a ShardKV instance won't
@@ -180,6 +162,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Command{})
+	labgob.Register(OperationArgs{})
+	labgob.Register(shardctrler.Config{})
 
 	kv := new(ShardKV)
 	kv.me = me
@@ -191,20 +175,26 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	// Your initialization code here.
 
 	// Use something like this to talk to the shardctrler:
-	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
+	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-	kv.kvmap = make(map[string]string)
+	kv.shards = make(map[int]*Shard)
 	kv.clientSessions = make(map[int64]Session)
 	kv.notifyChans = make(map[int]chan CommandReply)
 	kv.persister = persister
 	kv.lastApplied = 0
+	kv.currentCfg = &shardctrler.Config{}
+
+	for shardId := range kv.currentCfg.Shards {
+		kv.shards[shardId] = NewShard()
+	}
 
 	snapshot := persister.ReadSnapshot()
 	kv.installSnapshot(snapshot)
 
 	go kv.applier()
+	go kv.configPuller()
 
 	return kv
 }
@@ -229,7 +219,7 @@ func (kv *ShardKV) needSnapshot() bool {
 func (kv *ShardKV) takeSnapshot() []byte {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	e.Encode(kv.kvmap)
+	e.Encode(kv.shards)
 	e.Encode(kv.clientSessions)
 	snapshot := w.Bytes()
 	return snapshot
@@ -241,11 +231,11 @@ func (kv *ShardKV) installSnapshot(snapshot []byte) {
 	}
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
-	var kvmap map[string]string
+	var shards map[int]*Shard
 	var clientSessions map[int64]Session
-	if d.Decode(&kvmap) != nil || d.Decode(&clientSessions) != nil {
+	if d.Decode(&shards) != nil || d.Decode(&clientSessions) != nil {
 		debug.Debug(debug.DError, "S%d KVServer Cannot Deserialize State", kv.me)
 	} else {
-		kv.kvmap, kv.clientSessions = kvmap, clientSessions
+		kv.shards, kv.clientSessions = shards, clientSessions
 	}
 }

@@ -17,6 +17,7 @@ const (
 	ErrTimeout     ErrType = "ErrTimeout"
 	ErrWrongGroup  ErrType = "ErrWrongGroup"
 	ErrWrongLeader ErrType = "ErrWrongLeader"
+	ErrOutDated    ErrType = "ErrOutDated"
 )
 
 type OpType string
@@ -27,7 +28,7 @@ const (
 	OpAppend OpType = "Append"
 )
 
-type CommandArgs struct {
+type OperationArgs struct {
 	ClientId    int64
 	SequenceNum int // 就是command的id
 	Op          OpType
@@ -40,6 +41,6 @@ type CommandReply struct {
 	Value string
 }
 
-func (args *CommandArgs) isReadOnly() bool {
+func (args *OperationArgs) isReadOnly() bool {
 	return args.Op == OpGet
 }
