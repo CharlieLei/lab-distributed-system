@@ -4,17 +4,19 @@ package shardctrler
 // Shardctrler clerk.
 //
 
-import "6.824/labrpc"
-import "time"
-import "crypto/rand"
-import "math/big"
+import (
+	"6.824/labrpc"
+	"crypto/rand"
+	"math/big"
+	"time"
+)
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// Your data here.
-	clientId  int64
-	commandId int
-	leaderId  int
+	clientId    int64
+	sequenceNum int // 当前最后一个已发送command的id
+	leaderId    int
 }
 
 func nrand() int64 {
@@ -29,7 +31,7 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.servers = servers
 	// Your code here.
 	ck.clientId = nrand()
-	ck.commandId = 0
+	ck.sequenceNum = 0
 	ck.leaderId = 0
 	return ck
 }
@@ -37,45 +39,41 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 func (ck *Clerk) Query(num int) Config {
 	args := &CommandArgs{}
 	// Your code here.
-	args.Num = num
-	args.Op = OpQuery
+	args.Op, args.Num = OpQuery, num
 	return ck.sendCommand(args)
 }
 
 func (ck *Clerk) Join(servers map[int][]string) {
 	args := &CommandArgs{}
 	// Your code here.
-	args.Servers = servers
-	args.Op = OpJoin
+	args.Op, args.Servers = OpJoin, servers
 	ck.sendCommand(args)
 }
 
 func (ck *Clerk) Leave(gids []int) {
 	args := &CommandArgs{}
 	// Your code here.
-	args.GIDs = gids
-	args.Op = OpLeave
+	args.Op, args.GIDs = OpLeave, gids
 	ck.sendCommand(args)
 }
 
 func (ck *Clerk) Move(shard int, gid int) {
 	args := &CommandArgs{}
 	// Your code here.
-	args.Shard, args.GID = shard, gid
-	args.Op = OpMove
+	args.Op, args.Shard, args.GID = OpMove, shard, gid
 	ck.sendCommand(args)
 }
 
 func (ck *Clerk) sendCommand(args *CommandArgs) Config {
-	args.ClientId, args.CommandId = ck.clientId, ck.commandId
+	args.ClientId, args.SequenceNum = ck.clientId, ck.sequenceNum
 	for {
 		// try each known server.
 		for range ck.servers {
 			var reply CommandReply
 			srv := ck.servers[ck.leaderId]
 			ok := srv.Call("ShardCtrler.ExecCommand", args, &reply)
-			if ok && reply.Err != ErrWrongLeader && reply.Err != ErrTimeout {
-				ck.commandId++
+			if ok && reply.Err == OK {
+				ck.sequenceNum++
 				return reply.Config
 			}
 			ck.leaderId = (ck.leaderId + 1) % len(ck.servers)

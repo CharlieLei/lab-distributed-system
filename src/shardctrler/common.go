@@ -51,19 +51,23 @@ const (
 )
 
 type CommandArgs struct {
-	ClientId  int64
-	CommandId int
-	Op        OpType
-	Servers   map[int][]string // for Join, new GID -> servers mappings
-	GIDs      []int            // for Leave
-	Shard     int              // for Move
-	GID       int              // for Move
-	Num       int              // for Query, desired config number
+	ClientId    int64
+	SequenceNum int // 就是command的id
+	Op          OpType
+	Servers     map[int][]string // for Join, new GID -> servers mappings
+	GIDs        []int            // for Leave
+	Shard       int              // for Move
+	GID         int              // for Move
+	Num         int              // for Query, desired config number
 }
 
 type CommandReply struct {
 	Err    ErrType
 	Config Config
+}
+
+func (args *CommandArgs) isReadOnly() bool {
+	return args.Op == OpQuery
 }
 
 func (cfg *Config) copy() Config {

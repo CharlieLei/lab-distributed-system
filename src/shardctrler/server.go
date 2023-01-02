@@ -2,12 +2,12 @@ package shardctrler
 
 import (
 	"6.824/debug"
+	"6.824/labgob"
+	"6.824/labrpc"
 	"6.824/raft"
+	"sync"
 	"time"
 )
-import "6.824/labrpc"
-import "sync"
-import "6.824/labgob"
 
 const ClientRequestTimeout = 100 * time.Millisecond
 
@@ -16,8 +16,8 @@ type Command struct {
 }
 
 type Session struct {
-	LastCommandId int
-	LastReply     CommandReply
+	LastSequenceNum int
+	LastReply       CommandReply
 }
 
 type ShardCtrler struct {
@@ -35,7 +35,7 @@ type ShardCtrler struct {
 
 func (sc *ShardCtrler) ExecCommand(args *CommandArgs, reply *CommandReply) {
 	sc.mu.Lock()
-	if args.Op != OpQuery && sc.isDuplicateRequest(args.ClientId, args.CommandId) {
+	if !args.isReadOnly() && sc.isDuplicateRequest(args.ClientId, args.SequenceNum) {
 		lastReply := sc.clientSessions[args.ClientId].LastReply
 		reply.Err, reply.Config = lastReply.Err, lastReply.Config
 		sc.mu.Unlock()
@@ -79,12 +79,12 @@ func (sc *ShardCtrler) applier() {
 		sc.lastApplied = message.CommandIndex
 
 		var reply CommandReply
-		if args.Op != OpQuery && sc.isDuplicateRequest(args.ClientId, args.CommandId) {
+		if !args.isReadOnly() && sc.isDuplicateRequest(args.ClientId, args.SequenceNum) {
 			reply = sc.clientSessions[args.ClientId].LastReply
 		} else {
 			sc.applyLog(args, &reply)
-			if args.Op != OpQuery {
-				sc.clientSessions[args.ClientId] = Session{args.CommandId, reply}
+			if !args.isReadOnly() {
+				sc.clientSessions[args.ClientId] = Session{args.SequenceNum, reply}
 			}
 		}
 
@@ -203,7 +203,7 @@ func (sc *ShardCtrler) getNotifyChan(logIndex int) chan CommandReply {
 	return sc.notifyChans[logIndex]
 }
 
-func (sc *ShardCtrler) isDuplicateRequest(clientId int64, commandId int) bool {
+func (sc *ShardCtrler) isDuplicateRequest(clientId int64, sequenceNum int) bool {
 	session, ok := sc.clientSessions[clientId]
-	return ok && commandId <= session.LastCommandId
+	return ok && sequenceNum <= session.LastSequenceNum
 }
