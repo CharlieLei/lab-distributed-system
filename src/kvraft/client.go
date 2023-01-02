@@ -3,6 +3,7 @@ package kvraft
 import (
 	"6.824/debug"
 	"6.824/labrpc"
+	"time"
 )
 import "crypto/rand"
 import "math/big"
@@ -33,13 +34,19 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 }
 
 func (ck *Clerk) Get(key string) string {
-	return ck.sendCommand(key, "", OpGet)
+	args := &CommandArgs{}
+	args.Key, args.Op = key, OpGet
+	return ck.sendCommand(args)
 }
 func (ck *Clerk) Put(key string, value string) {
-	ck.sendCommand(key, value, OpPut)
+	args := &CommandArgs{}
+	args.Key, args.Value, args.Op = key, value, OpPut
+	ck.sendCommand(args)
 }
 func (ck *Clerk) Append(key string, value string) {
-	ck.sendCommand(key, value, OpAppend)
+	args := &CommandArgs{}
+	args.Key, args.Value, args.Op = key, value, OpAppend
+	ck.sendCommand(args)
 }
 
 // you can send an RPC with code like this:
@@ -48,27 +55,23 @@ func (ck *Clerk) Append(key string, value string) {
 // the types of args and reply (including whether they are pointers)
 // must match the declared types of the RPC handler function's
 // arguments. and reply must be passed as a pointer.
-func (ck *Clerk) sendCommand(key string, value string, op OpType) string {
-	args := CommandArgs{
-		ClientId:  ck.clientId,
-		CommandId: ck.commandId,
-		Key:       key,
-		Value:     value,
-		Op:        op,
-	}
+func (ck *Clerk) sendCommand(args *CommandArgs) string {
+	args.ClientId, args.CommandId = ck.clientId, ck.commandId
 	debug.Debug(debug.KVClient, "C%d Send Command args %v", ck.clientId, args)
 	for {
-		var reply CommandReply
-		if !ck.servers[ck.leaderId].Call("KVServer.ExecCommand", &args, &reply) ||
-			reply.Err == ErrWrongLeader || reply.Err == ErrTimeout {
-			//debug.Debug(debug.DWarn, "C%d Send Command To S%d Fail args %v, rply %v",
-			//	ck.clientId, ck.leaderId, args, reply)
+		// try each known server.
+		for range ck.servers {
+			var reply CommandReply
+			srv := ck.servers[ck.leaderId]
+			ok := srv.Call("KVServer.ExecCommand", args, &reply)
+			if ok && reply.Err == OK {
+				debug.Debug(debug.KVClient, "C%d Send Command To S%d Success args %v, rply {%v, %v}",
+					ck.clientId, ck.leaderId, args, reply.Err, len(reply.Value))
+				ck.commandId++
+				return reply.Value
+			}
 			ck.leaderId = (ck.leaderId + 1) % len(ck.servers)
-			continue
 		}
-		debug.Debug(debug.KVClient, "C%d Send Command To S%d Success args %v, rply {%v, %v}",
-			ck.clientId, ck.leaderId, args, reply.Err, len(reply.Value))
-		ck.commandId++
-		return reply.Value
+		time.Sleep(100 * time.Millisecond)
 	}
 }

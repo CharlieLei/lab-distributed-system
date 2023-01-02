@@ -14,11 +14,7 @@ import (
 const ClientRequestTimeout = 100 * time.Millisecond
 
 type Command struct {
-	ClientId  int64
-	CommandId int
-	Op        OpType
-	Key       string
-	Value     string
+	Args *CommandArgs
 }
 
 type Session struct {
@@ -49,20 +45,13 @@ func (kv *KVServer) ExecCommand(args *CommandArgs, reply *CommandReply) {
 		debug.Debug(debug.KVServer, "S%v Duplicate Command args%v", kv.me, args)
 		lastReply := kv.clientSessions[args.ClientId].LastReply
 		reply.Err, reply.Value = lastReply.Err, lastReply.Value
-		debug.Debug(debug.KVServer, "S%v Reply Command args %v, rply {%v %%v %v %v}", kv.me, args, reply.ClientId, reply.CommandId, reply.Err, len(reply.Value))
+		debug.Debug(debug.KVServer, "S%v Reply Command args %v, rply {%v %v}", kv.me, args, reply.Err, len(reply.Value))
 		kv.mu.Unlock()
 		return
 	}
-	op := Command{
-		Key:       args.Key,
-		Value:     args.Value,
-		Op:        args.Op,
-		ClientId:  args.ClientId,
-		CommandId: args.CommandId,
-	}
 	kv.mu.Unlock()
 
-	logIdx, _, isLeader := kv.rf.Start(op)
+	logIdx, _, isLeader := kv.rf.Start(Command{args})
 	if !isLeader {
 		reply.Err = ErrWrongLeader
 		return
@@ -72,9 +61,9 @@ func (kv *KVServer) ExecCommand(args *CommandArgs, reply *CommandReply) {
 	debug.Debug(debug.KVServer, "S%v Command Has Started args%v", kv.me, args)
 	ch := kv.getNotifyChan(logIdx)
 	kv.mu.Unlock()
+
 	select {
 	case result := <-ch:
-		reply.ClientId, reply.CommandId = result.ClientId, result.CommandId
 		reply.Err, reply.Value = result.Err, result.Value
 	case <-time.After(ClientRequestTimeout):
 		reply.Err = ErrTimeout
@@ -82,17 +71,16 @@ func (kv *KVServer) ExecCommand(args *CommandArgs, reply *CommandReply) {
 	kv.mu.Lock()
 	// delete outdated notifyChan
 	delete(kv.notifyChans, logIdx)
-	debug.Debug(debug.KVServer, "S%v Reply Command args %v, rply {%v %v %v %v}", kv.me, args, reply.ClientId, reply.CommandId, reply.Err, len(reply.Value))
+	debug.Debug(debug.KVServer, "S%v Reply Command args %v, rply {%v %v}", kv.me, args, reply.Err, len(reply.Value))
 	kv.mu.Unlock()
 }
 
 func (kv *KVServer) applier() {
 	for kv.killed() == false {
-		select {
-		case message := <-kv.applyCh:
+		for message := range kv.applyCh {
 			if message.CommandValid {
 				kv.mu.Lock()
-				command := message.Command.(Command)
+				args := message.Command.(Command).Args
 
 				if kv.lastApplied >= message.CommandIndex {
 					debug.Debug(debug.KVServer, "S%v Recv Outdated Msg %v Due to newer Snapshot installed, Not Apply, lastApplied %v", kv.me, message, kv.lastApplied)
@@ -102,17 +90,18 @@ func (kv *KVServer) applier() {
 				kv.lastApplied = message.CommandIndex
 
 				var reply CommandReply
-				if command.Op != OpGet && kv.isDuplicateRequest(command.ClientId, command.CommandId) {
-					reply = kv.clientSessions[command.ClientId].LastReply
-					debug.Debug(debug.KVServer, "S%v Apply Duplicate Command %v Result {%v %v %v, %v}", kv.me, command, reply.ClientId, reply.CommandId, reply.Err, len(reply.Value))
+				if args.Op != OpGet && kv.isDuplicateRequest(args.ClientId, args.CommandId) {
+					reply = kv.clientSessions[args.ClientId].LastReply
+					debug.Debug(debug.KVServer, "S%v Apply Duplicate Command %v Result {%v, %v}", kv.me, args, reply.Err, len(reply.Value))
 				} else {
-					reply = kv.applyLog(command)
-					if command.Op != OpGet {
-						kv.clientSessions[command.ClientId] = Session{command.CommandId, reply}
+					kv.applyLog(args, &reply)
+					if args.Op != OpGet {
+						kv.clientSessions[args.ClientId] = Session{args.CommandId, reply}
 					}
 				}
 
-				if currentTerm, isLeader := kv.rf.GetState(); currentTerm == message.CommandTerm && isLeader {
+				currentTerm, isLeader := kv.rf.GetState()
+				if currentTerm == message.CommandTerm && isLeader {
 					ch := kv.getNotifyChan(message.CommandIndex)
 					ch <- reply
 				}
@@ -140,43 +129,22 @@ func (kv *KVServer) applier() {
 	}
 }
 
-func (kv *KVServer) isDuplicateRequest(clientId int64, commandId int) bool {
-	// 不可能存在比lastCommandId还小；哪怕有，由于client已经发出commandId更大的command，因此client也已经不会接受该回复了
-	session, ok := kv.clientSessions[clientId]
-	return ok && commandId <= session.LastCommandId
-}
-
-func (kv *KVServer) applyLog(command Command) CommandReply {
-	var reply CommandReply
-	if command.Op == OpPut {
-		kv.kvmap[command.Key] = command.Value
-		reply.Value = kv.kvmap[command.Key]
-		debug.Debug(debug.KVServer, "S%d Command %v Put Value to KVMAP[%v]: %v", kv.me, command, command.Key, len(kv.kvmap[command.Key]))
-	} else if command.Op == OpAppend {
-		kv.kvmap[command.Key] += command.Value
-		reply.Value = kv.kvmap[command.Key]
-		debug.Debug(debug.KVServer, "S%d Command %v Append Value to KVMAP[%v]: %v", kv.me, command, command.Key, len(kv.kvmap[command.Key]))
-	} else if command.Op == OpGet {
-		if val, ok := kv.kvmap[command.Key]; ok {
+func (kv *KVServer) applyLog(args *CommandArgs, reply *CommandReply) {
+	switch args.Op {
+	case OpPut:
+		kv.kvmap[args.Key] = args.Value
+		reply.Value = kv.kvmap[args.Key]
+	case OpAppend:
+		kv.kvmap[args.Key] += args.Value
+		reply.Value = kv.kvmap[args.Key]
+	case OpGet:
+		if val, ok := kv.kvmap[args.Key]; ok {
 			reply.Value = val
 		} else {
 			reply.Value = ""
 		}
-		debug.Debug(debug.KVServer, "S%d Command %v Get Value to KVMAP[%v]: %v", kv.me, command, command.Key, len(reply.Value))
 	}
-	reply.ClientId, reply.CommandId, reply.Err = command.ClientId, command.CommandId, OK
-	return reply
-}
-
-func (kv *KVServer) getNotifyChan(logIndex int) chan CommandReply {
-	if _, ok := kv.notifyChans[logIndex]; !ok {
-		kv.notifyChans[logIndex] = make(chan CommandReply, 1)
-	}
-	return kv.notifyChans[logIndex]
-}
-
-func (kv *KVServer) needSnapshot() bool {
-	return kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate
+	reply.Err = OK
 }
 
 func (kv *KVServer) takeSnapshot() []byte {
@@ -261,4 +229,21 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	go kv.applier()
 
 	return kv
+}
+
+func (kv *KVServer) isDuplicateRequest(clientId int64, commandId int) bool {
+	// 不可能存在比lastCommandId还小；哪怕有，由于client已经发出commandId更大的command，因此client也已经不会接受该回复了
+	session, ok := kv.clientSessions[clientId]
+	return ok && commandId <= session.LastCommandId
+}
+
+func (kv *KVServer) getNotifyChan(logIndex int) chan CommandReply {
+	if _, ok := kv.notifyChans[logIndex]; !ok {
+		kv.notifyChans[logIndex] = make(chan CommandReply, 1)
+	}
+	return kv.notifyChans[logIndex]
+}
+
+func (kv *KVServer) needSnapshot() bool {
+	return kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate
 }
