@@ -35,17 +35,17 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 
 func (ck *Clerk) Get(key string) string {
 	args := &CommandArgs{}
-	args.Key, args.Op = key, OpGet
+	args.Op, args.Key = OpGet, key
 	return ck.sendCommand(args)
 }
 func (ck *Clerk) Put(key string, value string) {
 	args := &CommandArgs{}
-	args.Key, args.Value, args.Op = key, value, OpPut
+	args.Op, args.Key, args.Value = OpPut, key, value
 	ck.sendCommand(args)
 }
 func (ck *Clerk) Append(key string, value string) {
 	args := &CommandArgs{}
-	args.Key, args.Value, args.Op = key, value, OpAppend
+	args.Op, args.Key, args.Value = OpAppend, key, value
 	ck.sendCommand(args)
 }
 
