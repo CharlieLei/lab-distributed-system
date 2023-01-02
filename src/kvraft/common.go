@@ -4,7 +4,6 @@ type ErrType string
 
 const (
 	OK             ErrType = "OK"
-	ErrNoKey       ErrType = "ErrNoKey"
 	ErrWrongLeader ErrType = "ErrWrongLeader"
 	ErrTimeout     ErrType = "ErrTimeout"
 )
@@ -26,8 +25,6 @@ type CommandArgs struct {
 }
 
 type CommandReply struct {
-	ClientId  int64
-	CommandId int
-	Err       ErrType
-	Value     string
+	Err   ErrType
+	Value string
 }
