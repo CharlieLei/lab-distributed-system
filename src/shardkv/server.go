@@ -194,7 +194,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.installSnapshot(snapshot)
 
 	go kv.applier()
-	go kv.configPuller()
+	go kv.configUpdater()
 
 	return kv
 }

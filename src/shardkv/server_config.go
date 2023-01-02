@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-func (kv *ShardKV) configPuller() {
+func (kv *ShardKV) configUpdater() {
 	for {
 		time.Sleep(80 * time.Millisecond)
 		canPullCfg := true
