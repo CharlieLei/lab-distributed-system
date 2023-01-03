@@ -31,6 +31,7 @@ func (kv *ShardKV) shardPuller() {
 			var wg sync.WaitGroup
 			for groupId, shardIds := range groupId2shardIds {
 				wg.Add(1)
+				// CAUTION: 旧的config才有需要pulling的shard所在的group，新的config可能将这个group删除
 				go func(servers []string, configNum int, shardIds []int) {
 					defer wg.Done()
 					args := ShardMigrationArgs{configNum, shardIds}
