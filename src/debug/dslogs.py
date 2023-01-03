@@ -79,13 +79,16 @@ def main(
             if topic not in topics:
                 continue
 
+            locator = msg[0]
             msg = " ".join(msg)
 
             # Debug calls from the test suite aren't associated with
             # any particular peer. Otherwise we can treat second column
             # as peer id
             if topic != "TEST":
-                i = int(msg[1])
+                idx = locator.find(":")
+                num = locator[1:idx] if idx != -1 else locator[1:]
+                i = int(num) % 10
 
             # Colorize output by using rich syntax when needed
             if colorize and topic in TOPICS:
