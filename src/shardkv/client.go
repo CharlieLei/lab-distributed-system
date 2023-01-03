@@ -9,6 +9,7 @@ package shardkv
 //
 
 import (
+	"6.824/debug"
 	"6.824/labrpc"
 	"6.824/shardctrler"
 	"crypto/rand"
@@ -74,6 +75,7 @@ func (ck *Clerk) Put(key string, value string) {
 func (ck *Clerk) Append(key string, value string) {
 	args := &OperationArgs{}
 	args.Op, args.Key, args.Value = OpAppend, key, value
+	ck.sendCommand(args)
 }
 
 func (ck *Clerk) sendCommand(args *OperationArgs) string {
@@ -87,6 +89,8 @@ func (ck *Clerk) sendCommand(args *OperationArgs) string {
 				srv := ck.make_end(servers[ck.leaderId])
 				ok := srv.Call("ShardKV.ExecOperation", args, &reply)
 				if ok && reply.Err == OK {
+					debug.Debug(debug.KVClient, "C%d Send Command To S%d Success args %v, rply {%v, %v}",
+						ck.clientId, ck.leaderId, args, reply.Err, reply.Value)
 					ck.sequenceNum++
 					return reply.Value
 				}

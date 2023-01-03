@@ -1,5 +1,7 @@
 package shardkv
 
+import "6.824/debug"
+
 func (kv *ShardKV) canServe(shardId int) bool {
 	return kv.currentCfg.Shards[shardId] == kv.gid && kv.shards[shardId].Status == WORKING
 }
@@ -48,5 +50,6 @@ func (kv *ShardKV) applyOperation(args *OperationArgs) CommandReply {
 	} else {
 		reply.Err = ErrWrongGroup
 	}
+	debug.Debug(debug.KVOp, "S%d:G%d ApplyOp Finished, args %v rply %v", kv.me, kv.gid, args, reply)
 	return reply
 }

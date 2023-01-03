@@ -12,12 +12,13 @@ package shardkv
 type ErrType string
 
 const (
-	OK             ErrType = "OK"
-	ErrNoKey       ErrType = "ErrNoKey"
-	ErrTimeout     ErrType = "ErrTimeout"
-	ErrWrongGroup  ErrType = "ErrWrongGroup"
-	ErrWrongLeader ErrType = "ErrWrongLeader"
-	ErrOutDated    ErrType = "ErrOutDated"
+	OK               ErrType = "OK"
+	ErrNoKey         ErrType = "ErrNoKey"
+	ErrTimeout       ErrType = "ErrTimeout"
+	ErrWrongGroup    ErrType = "ErrWrongGroup"
+	ErrWrongLeader   ErrType = "ErrWrongLeader"
+	ErrOutDated      ErrType = "ErrOutDated"
+	ErrShardNotReady ErrType = "ErrShardNotReady"
 )
 
 type OpType string
@@ -28,6 +29,24 @@ const (
 	OpAppend OpType = "Append"
 )
 
+type CommandType string
+
+const (
+	CmdOperation    CommandType = "Operation"
+	CmdConfig       CommandType = "Config"
+	CmdInsertShards CommandType = "InsertShards"
+)
+
+type Command struct {
+	Type CommandType
+	Data interface{}
+}
+
+type Session struct {
+	LastSequenceNum int
+	LastReply       CommandReply
+}
+
 type OperationArgs struct {
 	ClientId    int64
 	SequenceNum int // 就是command的id
@@ -36,11 +55,22 @@ type OperationArgs struct {
 	Value       string
 }
 
+func (args *OperationArgs) isReadOnly() bool {
+	return args.Op == OpGet
+}
+
 type CommandReply struct {
 	Err   ErrType
 	Value string
 }
 
-func (args *OperationArgs) isReadOnly() bool {
-	return args.Op == OpGet
+type ShardMigrationArgs struct {
+	ConfigNum int
+	ShardIds  []int
+}
+
+type ShardMigrationReply struct {
+	Err       ErrType
+	ConfigNum int
+	ShardsKV  map[int]map[string]string
 }

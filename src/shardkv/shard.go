@@ -14,7 +14,8 @@ type Shard struct {
 }
 
 func NewShard() *Shard {
-	return &Shard{INVALID, make(map[string]string)}
+	// 避免初始后h第1个
+	return &Shard{WORKING, make(map[string]string)}
 }
 
 func (shard *Shard) Get(key string) (string, ErrType) {
@@ -34,10 +35,14 @@ func (shard *Shard) Append(key string, value string) ErrType {
 	return OK
 }
 
-func (shard *Shard) deepcopy() Shard {
-	newShard := NewShard()
+func (shard *Shard) deepcopyKV() map[string]string {
+	newKV := make(map[string]string)
 	for k, v := range shard.KV {
-		newShard.KV[k] = v
+		newKV[k] = v
 	}
-	return *newShard
+	return newKV
+}
+
+func (shard *Shard) String() string {
+	return string(shard.Status)
 }

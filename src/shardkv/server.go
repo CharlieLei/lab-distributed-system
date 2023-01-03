@@ -13,26 +13,6 @@ import (
 
 const ClientRequestTimeout = 100 * time.Millisecond
 
-type CommandType string
-
-const (
-	CmdOperation CommandType = "Operation"
-	CmdConfig    CommandType = "Config"
-)
-
-type Command struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
-	Type CommandType
-	Data interface{}
-}
-
-type Session struct {
-	LastSequenceNum int
-	LastReply       CommandReply
-}
-
 type ShardKV struct {
 	mu       sync.Mutex
 	me       int
@@ -51,6 +31,7 @@ type ShardKV struct {
 	notifyChans    map[int]chan CommandReply
 	persister      *raft.Persister
 	lastApplied    int
+	previousCfg    *shardctrler.Config
 	currentCfg     *shardctrler.Config
 }
 
@@ -90,6 +71,8 @@ func (kv *ShardKV) applier() {
 
 			var reply CommandReply
 			command := message.Command.(Command)
+			debug.Debug(debug.KVServer, "S%d:G%d Start Apply Command %v, message %v",
+				kv.me, kv.gid, command, message)
 			switch command.Type {
 			case CmdOperation:
 				operation := command.Data.(OperationArgs)
@@ -97,6 +80,9 @@ func (kv *ShardKV) applier() {
 			case CmdConfig:
 				nextCfg := command.Data.(shardctrler.Config)
 				reply = kv.applyConfig(&nextCfg)
+			case CmdInsertShards:
+				shardsInfo := command.Data.(ShardMigrationReply)
+				reply = kv.applyInsertShards(&shardsInfo)
 			}
 
 			currentTerm, isLeader := kv.rf.GetState()
@@ -164,6 +150,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	labgob.Register(Command{})
 	labgob.Register(OperationArgs{})
 	labgob.Register(shardctrler.Config{})
+	labgob.Register(ShardMigrationArgs{})
+	labgob.Register(ShardMigrationReply{})
 
 	kv := new(ShardKV)
 	kv.me = me
@@ -184,6 +172,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.notifyChans = make(map[int]chan CommandReply)
 	kv.persister = persister
 	kv.lastApplied = 0
+	kv.previousCfg = &shardctrler.Config{}
 	kv.currentCfg = &shardctrler.Config{}
 
 	for shardId := range kv.currentCfg.Shards {
@@ -195,6 +184,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	go kv.applier()
 	go kv.configUpdater()
+	go kv.shardPuller()
 
 	return kv
 }
