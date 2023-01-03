@@ -29,8 +29,8 @@ func (kv *ShardKV) configUpdater() {
 				nextCfg := kv.mck.Query(currentCfgNum + 1)
 				// 只有更加新的config才需要将新config发送给follower
 				if nextCfg.Num == currentCfgNum+1 {
-					debug.Debug(debug.KVConfig, "S%d:G%d Exec configUpdate, currCfgNum %v nxtCfgNum %v",
-						kv.me, kv.gid, kv.currentCfg.Num, nextCfg.Num)
+					debug.Debug(debug.KVConfig, "G%d:S%d Exec configUpdate, currCfgNum %v nxtCfgNum %v",
+						kv.gid, kv.me, kv.currentCfg.Num, nextCfg.Num)
 					kv.Execute(Command{CmdConfig, nextCfg}, &CommandReply{})
 				}
 			}
@@ -55,7 +55,7 @@ func (kv *ShardKV) applyConfig(nextCfg *shardctrler.Config) CommandReply {
 	} else {
 		reply.Err = ErrOutDated
 	}
-	debug.Debug(debug.KVConfig, "S%d:G%d ApplyCfg Finished, prevCfg %v currCfg %v, nxtCfg %v rply %v",
-		kv.me, kv.gid, kv.previousCfg, kv.currentCfg, nextCfg, reply)
+	debug.Debug(debug.KVConfig, "G%d:S%d ApplyCfg Finished, prevCfg %v currCfg %v, nxtCfg %v rply %v",
+		kv.gid, kv.me, kv.previousCfg, kv.currentCfg, nextCfg, reply)
 	return reply
 }

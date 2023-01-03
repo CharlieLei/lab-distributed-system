@@ -71,8 +71,8 @@ func (kv *ShardKV) applier() {
 
 			var reply CommandReply
 			command := message.Command.(Command)
-			debug.Debug(debug.KVServer, "S%d:G%d Start Apply Command %v, message %v",
-				kv.me, kv.gid, command, message)
+			debug.Debug(debug.KVServer, "G%d:S%d Start Apply Command %v, message %v",
+				kv.gid, kv.me, command, message)
 			switch command.Type {
 			case CmdOperation:
 				operation := command.Data.(OperationArgs)
