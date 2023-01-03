@@ -28,8 +28,14 @@ TOPICS = {
     "WARN": "#d08341",
     "ERRO": "#fe2626",
     "TRCE": "#fe2626",
+    "CTCLNT": "#67a0b2",
+    "CTSEVR": "#fe2c79",
     "KVCLNT": "#00813c",
     "KVSEVR": "#d0b343",
+    "KVOPER": "#4878bc",
+    "KVCNFG": "#fe2c79",
+    "KVSHAD": "#98719f",
+    "KVGCOL": "#ffffff"
 }
 # fmt: on
 

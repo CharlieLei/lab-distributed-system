@@ -110,7 +110,7 @@ func (sc *ShardCtrler) applyLog(args *CommandArgs, reply *CommandReply) {
 	default:
 		panic("WRONG CommandArgs OpType")
 	}
-	debug.Debug(debug.KVServer, "S%d Command %v, configs %v, rply %v",
+	debug.Debug(debug.CTServer, "S%d Command %v, configs %v, rply %v",
 		sc.me, args, sc.configs, reply)
 }
 

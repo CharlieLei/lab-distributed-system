@@ -1,7 +1,6 @@
 package shardctrler
 
 import (
-	"6.824/debug"
 	"sort"
 )
 
@@ -119,7 +118,7 @@ func (cfg *Config) reAllocateGid() {
 	var newShards [NShards]int
 	for groupId, shards := range group2shards {
 		for _, shard := range shards {
-			debug.Debug(debug.KVServer, "CONFIG realloGID, groupId %v shards %v shard %v", groupId, shards, shard)
+			//debug.Debug(debug.KVServer, "CONFIG realloGID, groupId %v shards %v shard %v", groupId, shards, shard)
 			newShards[shard] = groupId
 		}
 	}

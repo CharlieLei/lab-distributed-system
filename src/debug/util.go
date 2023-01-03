@@ -28,8 +28,14 @@ const (
 	DTrace   logTopic = "TRCE"
 	DVote    logTopic = "VOTE"
 	DWarn    logTopic = "WARN"
+	CTClient logTopic = "CTCLNT"
+	CTServer logTopic = "CTSEVR"
 	KVClient logTopic = "KVCLNT"
 	KVServer logTopic = "KVSEVR"
+	KVOp     logTopic = "KVOPER"
+	KVConfig logTopic = "KVCNFG"
+	KVShard  logTopic = "KVSHAD"
+	KVGc     logTopic = "KVGCOL"
 )
 
 // Retrieve the verbosity level from an environment variable
