@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -62,6 +63,9 @@ func init() {
 }
 
 func Debug(topic logTopic, format string, a ...interface{}) {
+	if debugVerbosity == 3 && !strings.Contains(string(topic), "KV") {
+		return
+	}
 	if debugVerbosity >= 1 {
 		debugNow := time.Since(debugStart).Microseconds()
 		prefix := fmt.Sprintf("%06d %v ", debugNow, string(topic))

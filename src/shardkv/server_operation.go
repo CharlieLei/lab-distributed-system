@@ -11,6 +11,8 @@ func (kv *ShardKV) ExecOperation(args *OperationArgs, reply *CommandReply) {
 	if !args.isReadOnly() && kv.isDuplicateRequest(args.ClientId, args.SequenceNum) {
 		lastReply := kv.clientSessions[args.ClientId].LastReply
 		reply.Err, reply.Value = lastReply.Err, lastReply.Value
+		debug.Debug(debug.KVOp, "G%d:S%d ExecOperation Duplicate, clientSessions %v args %v",
+			kv.gid, kv.me, kv.clientSessions, args)
 		kv.mu.Unlock()
 		return
 	}
@@ -53,4 +55,10 @@ func (kv *ShardKV) applyOperation(args *OperationArgs) CommandReply {
 	debug.Debug(debug.KVOp, "G%d:S%d ApplyOp Finished, args %v rply %v",
 		kv.gid, kv.me, args, reply)
 	return reply
+}
+
+func (kv *ShardKV) isDuplicateRequest(clientId int64, sequenceNum int) bool {
+	// 不可能存在比lastCommandId还小；哪怕有，由于client已经发出commandId更大的command，因此client也已经不会接受该回复了
+	session, ok := kv.clientSessions[clientId]
+	return ok && sequenceNum <= session.LastSequenceNum
 }

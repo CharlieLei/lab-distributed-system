@@ -58,6 +58,9 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	ck.sm = shardctrler.MakeClerk(ctrlers)
 	ck.make_end = make_end
 	// You'll have to add code here.
+	ck.clientId = nrand()
+	ck.sequenceNum = 0
+	ck.leaderId = 0
 	return ck
 }
 

@@ -16,9 +16,6 @@ func (kv *ShardKV) shardPuller() {
 				if shard.Status == PULLING {
 					// 此时的currentCfg已经是新的config，需要从上一个config中获得需要发送的shard所在的group
 					targetGroupId := kv.previousCfg.Shards[shardId]
-					//if _, hasGroup := kv.previousCfg[targetGroupId]; hasGroup {
-					//
-					//}
 					groupId2shardIds[targetGroupId] = append(groupId2shardIds[targetGroupId], shardId)
 				}
 			}
@@ -75,10 +72,16 @@ func (kv *ShardKV) GetShardsData(args *ShardMigrationArgs, reply *ShardMigration
 	}
 	// CAUTION: 由于server是按照按顺序获取config，因此有可能出现某个group在config上落后很久
 	//    此时按顺序像其他group获取shard时，该落后group发送的configNum就会比其他group的configNum小
+	//    因此当args.ConfigNum < kv.currentCfg.Num也要正常返回
 
 	reply.ShardsKV = make(map[int]map[string]string)
 	for _, shardId := range args.ShardIds {
 		reply.ShardsKV[shardId] = kv.shards[shardId].deepcopyKV()
+	}
+
+	reply.ClientSessions = make(map[int64]Session)
+	for clientId, session := range kv.clientSessions {
+		reply.ClientSessions[clientId] = session.deepcopy()
 	}
 
 	reply.ConfigNum, reply.Err = args.ConfigNum, OK
@@ -98,6 +101,17 @@ func (kv *ShardKV) applyInsertShards(shardsInfo *ShardMigrationReply) CommandRep
 				// shardPuller可能会发送多个相同configNum的InsertShards命令，这就可能遇到前面的命令已经处理，
 				//   后面的命令就会遇到shard.Status == WORKING
 				break
+			}
+		}
+		// CAUTION: 可能会出现如下情况：client向shard1写数据
+		//   当server写入shard并更新其clientSessions后，整个raft组1崩溃，因此client没有收到返回信息
+		//   此时shard1分配给另外一个raft组2，然后raft组1恢复，raft组2向raft组1获取shard1
+		//   由于client没收到返回信息，因此会向组2重新发写数据请求
+		//   如果组2没有组1的clientSession，组2就会认为client发送的是新请求而不是已经写入的请求，这样就会在shard1上执行两次写
+		for clientId, session := range shardsInfo.ClientSessions {
+			lastSession, ok := kv.clientSessions[clientId]
+			if !ok || lastSession.LastSequenceNum < session.LastSequenceNum {
+				kv.clientSessions[clientId] = session
 			}
 		}
 		reply.Err = OK

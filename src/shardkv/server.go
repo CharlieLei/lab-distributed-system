@@ -189,12 +189,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	return kv
 }
 
-func (kv *ShardKV) isDuplicateRequest(clientId int64, sequenceNum int) bool {
-	// 不可能存在比lastCommandId还小；哪怕有，由于client已经发出commandId更大的command，因此client也已经不会接受该回复了
-	session, ok := kv.clientSessions[clientId]
-	return ok && sequenceNum <= session.LastSequenceNum
-}
-
 func (kv *ShardKV) getNotifyChan(logIndex int) chan CommandReply {
 	if _, ok := kv.notifyChans[logIndex]; !ok {
 		kv.notifyChans[logIndex] = make(chan CommandReply, 1)
@@ -211,6 +205,8 @@ func (kv *ShardKV) takeSnapshot() []byte {
 	e := labgob.NewEncoder(w)
 	e.Encode(kv.shards)
 	e.Encode(kv.clientSessions)
+	e.Encode(kv.previousCfg)
+	e.Encode(kv.currentCfg)
 	snapshot := w.Bytes()
 	return snapshot
 }
@@ -223,9 +219,12 @@ func (kv *ShardKV) installSnapshot(snapshot []byte) {
 	d := labgob.NewDecoder(r)
 	var shards map[int]*Shard
 	var clientSessions map[int64]Session
-	if d.Decode(&shards) != nil || d.Decode(&clientSessions) != nil {
+	var previousCfg *shardctrler.Config
+	var currentCfg *shardctrler.Config
+	if d.Decode(&shards) != nil || d.Decode(&clientSessions) != nil || d.Decode(&previousCfg) != nil || d.Decode(&currentCfg) != nil {
 		debug.Debug(debug.DError, "S%d KVServer Cannot Deserialize State", kv.me)
 	} else {
-		kv.shards, kv.clientSessions = shards, clientSessions
+		debug.Debug(debug.KVSnap, "G%d:S%d KVServer Install snapshot, shards[0] 0->%v", kv.gid, kv.me, shards[0].KV["0"])
+		kv.shards, kv.clientSessions, kv.previousCfg, kv.currentCfg = shards, clientSessions, previousCfg, currentCfg
 	}
 }

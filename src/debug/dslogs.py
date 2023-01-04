@@ -88,7 +88,7 @@ def main(
             if topic != "TEST":
                 idx = locator.find(":")
                 num = locator[1:idx] if idx != -1 else locator[1:]
-                i = int(num) % 10
+                i = int(num) % n_columns
 
             # Colorize output by using rich syntax when needed
             if colorize and topic in TOPICS:

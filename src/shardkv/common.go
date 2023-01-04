@@ -47,6 +47,11 @@ type Session struct {
 	LastReply       CommandReply
 }
 
+func (s *Session) deepcopy() Session {
+	reply := CommandReply{s.LastReply.Err, s.LastReply.Value}
+	return Session{s.LastSequenceNum, reply}
+}
+
 type OperationArgs struct {
 	ClientId    int64
 	SequenceNum int // 就是command的id
@@ -70,7 +75,8 @@ type ShardMigrationArgs struct {
 }
 
 type ShardMigrationReply struct {
-	Err       ErrType
-	ConfigNum int
-	ShardsKV  map[int]map[string]string
+	Err            ErrType
+	ConfigNum      int
+	ShardsKV       map[int]map[string]string
+	ClientSessions map[int64]Session
 }
