@@ -28,7 +28,7 @@ func (kv *ShardKV) shardPuller() {
 			var wg sync.WaitGroup
 			for groupId, shardIds := range groupId2shardIds {
 				wg.Add(1)
-				// CAUTION: 旧的config才有需要pulling的shard所在的group，新的config可能将这个group删除
+				// CAUTION: 旧的config才有需要pulling的shard所在的group，新的config可能已经将这个group删除了
 				go func(servers []string, configNum int, shardIds []int) {
 					defer wg.Done()
 					args := ShardMigrationArgs{configNum, shardIds}
@@ -108,18 +108,21 @@ func (kv *ShardKV) applyInsertShards(shardsInfo *ShardMigrationReply) CommandRep
 		//   此时shard1分配给另外一个raft组2，然后raft组1恢复，raft组2向raft组1获取shard1
 		//   由于client没收到返回信息，因此会向组2重新发写数据请求
 		//   如果组2没有组1的clientSession，组2就会认为client发送的是新请求而不是已经写入的请求，这样就会在shard1上执行两次写
-		for clientId, session := range shardsInfo.ClientSessions {
-			lastSession, ok := kv.clientSessions[clientId]
-			if !ok || lastSession.LastSequenceNum < session.LastSequenceNum {
-				kv.clientSessions[clientId] = session
+		for clientId, newShardSession := range shardsInfo.ClientSessions {
+			oldShardSession, ok := kv.clientSessions[clientId]
+			if !ok || oldShardSession.LastSequenceNum < newShardSession.LastSequenceNum {
+				kv.clientSessions[clientId] = newShardSession
 			}
 		}
 		reply.Err = OK
 	} else {
-		panic("ApplyInsertShards different Config num")
+		// CAUTION: 可能出现传入的shardsInfo.ConfigNum < currentCfg.Num
+		//   可能前一个config发送了多个GetShardsData()请求，但后面的一些请求返回太慢；前一个config已经apply且
+		//   后一个config已经被传入Execute后，该请求才返回；虽然这个请求是冗余的，但前一个config还是会在后一个config后面传入Execute，
+		//   出现shardsInfo.ConfigNum < currentCfg.Num
+		reply.Err = ErrOutDated
 	}
 	debug.Debug(debug.KVShard, "G%d:S%d ApplyInsertShards Finished, shardsInfo %v rply %v",
 		kv.gid, kv.me, shardsInfo, reply)
-	//return CommandReply{ErrOutDated, ""}
 	return reply
 }
