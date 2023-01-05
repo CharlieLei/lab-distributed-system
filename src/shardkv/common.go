@@ -35,6 +35,7 @@ const (
 	CmdOperation    CommandType = "Operation"
 	CmdConfig       CommandType = "Config"
 	CmdInsertShards CommandType = "InsertShards"
+	CmdDeleteShards CommandType = "RemoveShards"
 )
 
 type Command struct {
@@ -69,12 +70,12 @@ type CommandReply struct {
 	Value string
 }
 
-type ShardMigrationArgs struct {
+type ShardOperationArgs struct {
 	ConfigNum int
 	ShardIds  []int
 }
 
-type ShardMigrationReply struct {
+type ShardOperationReply struct {
 	Err            ErrType
 	ConfigNum      int
 	ShardsKV       map[int]map[string]string

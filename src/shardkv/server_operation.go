@@ -3,7 +3,9 @@ package shardkv
 import "6.824/debug"
 
 func (kv *ShardKV) canServe(shardId int) bool {
-	return kv.currentCfg.Shards[shardId] == kv.gid && kv.shards[shardId].Status == WORKING
+	// status == GCING说明当前shard已经从原raft组中获得，但原raft组还没有删除该shard
+	return kv.currentCfg.Shards[shardId] == kv.gid &&
+		(kv.shards[shardId].Status == WORKING || kv.shards[shardId].Status == GCING)
 }
 
 func (kv *ShardKV) ExecOperation(args *OperationArgs, reply *CommandReply) {

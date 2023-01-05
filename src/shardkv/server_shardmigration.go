@@ -11,14 +11,7 @@ func (kv *ShardKV) shardPuller() {
 		if _, isLeader := kv.rf.GetState(); isLeader {
 			kv.mu.Lock()
 
-			groupId2shardIds := make(map[int][]int)
-			for shardId, shard := range kv.shards {
-				if shard.Status == PULLING {
-					// 此时的currentCfg已经是新的config，需要从上一个config中获得需要发送的shard所在的group
-					targetGroupId := kv.previousCfg.Shards[shardId]
-					groupId2shardIds[targetGroupId] = append(groupId2shardIds[targetGroupId], shardId)
-				}
-			}
+			groupId2shardIds := kv.getShardIdsByStatus(PULLING)
 
 			if len(groupId2shardIds) > 0 {
 				debug.Debug(debug.KVShard, "G%d:S%d shardPuller, prevCfg %v currCfg %v groupId2shardIds %v kvshards %v",
@@ -31,9 +24,9 @@ func (kv *ShardKV) shardPuller() {
 				// CAUTION: 旧的config才有需要pulling的shard所在的group，新的config可能已经将这个group删除了
 				go func(servers []string, configNum int, shardIds []int) {
 					defer wg.Done()
-					args := ShardMigrationArgs{configNum, shardIds}
+					args := ShardOperationArgs{configNum, shardIds}
 					for _, server := range servers {
-						var reply ShardMigrationReply
+						var reply ShardOperationReply
 						srv := kv.make_end(server)
 						debug.Debug(debug.KVShard, "G%d:S%d Start GetShardsData Send to Server %v, shardMigArgs %v",
 							kv.gid, kv.me, server, args)
@@ -50,11 +43,11 @@ func (kv *ShardKV) shardPuller() {
 			kv.mu.Unlock()
 			wg.Wait()
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
-func (kv *ShardKV) GetShardsData(args *ShardMigrationArgs, reply *ShardMigrationReply) {
+func (kv *ShardKV) GetShardsData(args *ShardOperationArgs, reply *ShardOperationReply) {
 	// 只有group中的leader才能够发送shard
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Err = ErrWrongLeader
@@ -87,7 +80,7 @@ func (kv *ShardKV) GetShardsData(args *ShardMigrationArgs, reply *ShardMigration
 	reply.ConfigNum, reply.Err = args.ConfigNum, OK
 }
 
-func (kv *ShardKV) applyInsertShards(shardsInfo *ShardMigrationReply) CommandReply {
+func (kv *ShardKV) applyInsertShards(shardsInfo *ShardOperationReply) CommandReply {
 	var reply CommandReply
 	if shardsInfo.ConfigNum == kv.currentCfg.Num {
 		for shardId, shardKV := range shardsInfo.ShardsKV {
@@ -96,7 +89,7 @@ func (kv *ShardKV) applyInsertShards(shardsInfo *ShardMigrationReply) CommandRep
 				for k, v := range shardKV {
 					shard.KV[k] = v
 				}
-				shard.Status = WORKING
+				shard.Status = GCING
 			} else {
 				// shardPuller可能会发送多个相同configNum的InsertShards命令，这就可能遇到前面的命令已经处理，
 				//   后面的命令就会遇到shard.Status == WORKING

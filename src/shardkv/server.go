@@ -81,8 +81,11 @@ func (kv *ShardKV) applier() {
 				nextCfg := command.Data.(shardctrler.Config)
 				reply = kv.applyConfig(&nextCfg)
 			case CmdInsertShards:
-				shardsInfo := command.Data.(ShardMigrationReply)
+				shardsInfo := command.Data.(ShardOperationReply)
 				reply = kv.applyInsertShards(&shardsInfo)
+			case CmdDeleteShards:
+				shardsInfo := command.Data.(ShardOperationArgs)
+				reply = kv.applyDeleteShards(&shardsInfo)
 			}
 
 			currentTerm, isLeader := kv.rf.GetState()
@@ -150,8 +153,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	labgob.Register(Command{})
 	labgob.Register(OperationArgs{})
 	labgob.Register(shardctrler.Config{})
-	labgob.Register(ShardMigrationArgs{})
-	labgob.Register(ShardMigrationReply{})
+	labgob.Register(ShardOperationArgs{})
+	labgob.Register(ShardOperationReply{})
 
 	kv := new(ShardKV)
 	kv.me = me
@@ -185,6 +188,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	go kv.applier()
 	go kv.configUpdater()
 	go kv.shardPuller()
+	go kv.garbageCollector()
 
 	return kv
 }
@@ -227,4 +231,17 @@ func (kv *ShardKV) installSnapshot(snapshot []byte) {
 		debug.Debug(debug.KVSnap, "G%d:S%d KVServer Install snapshot, shards[0] 0->%v", kv.gid, kv.me, shards[0].KV["0"])
 		kv.shards, kv.clientSessions, kv.previousCfg, kv.currentCfg = shards, clientSessions, previousCfg, currentCfg
 	}
+}
+
+func (kv *ShardKV) getShardIdsByStatus(status ShardStatus) map[int][]int {
+	// gid -> [shardId1, shardId2, ...]
+	groupId2shardIds := make(map[int][]int)
+	for shardId, shard := range kv.shards {
+		if shard.Status == status {
+			// 此时的currentCfg已经是新的config，需要从上一个config中获得需要发送的shard所在的group
+			targetGroupId := kv.previousCfg.Shards[shardId]
+			groupId2shardIds[targetGroupId] = append(groupId2shardIds[targetGroupId], shardId)
+		}
+	}
+	return groupId2shardIds
 }

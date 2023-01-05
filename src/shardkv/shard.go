@@ -6,6 +6,7 @@ const (
 	INVALID ShardStatus = "invalid"
 	WORKING ShardStatus = "working"
 	PULLING ShardStatus = "pulling"
+	GCING   ShardStatus = "gcing" // 该shard已经从其他group中获取，需要删除其他group中的该shard
 )
 
 type Shard struct {
@@ -41,6 +42,10 @@ func (shard *Shard) deepcopyKV() map[string]string {
 		newKV[k] = v
 	}
 	return newKV
+}
+
+func (shard *Shard) clear() {
+	shard.KV = make(map[string]string)
 }
 
 func (shard *Shard) String() string {
