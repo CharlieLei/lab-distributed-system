@@ -59,7 +59,7 @@ func (kv *ShardKV) applyConfig(nextCfg *shardctrler.Config) CommandReply {
 	} else {
 		reply.Err = ErrOutDated
 	}
-	debug.Debug(debug.KVConfig, "G%d:S%d ApplyCfg Finished, prevCfg %v currCfg %v, nxtCfg %v rply %v",
-		kv.gid, kv.me, kv.previousCfg, kv.currentCfg, nextCfg, reply)
+	debug.Debug(debug.KVConfig, "G%d:S%d ApplyCfg Finished, prevCfg %v currCfg %v shards %v rply %v",
+		kv.gid, kv.me, kv.previousCfg, kv.currentCfg, kv.shards, reply)
 	return reply
 }

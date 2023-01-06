@@ -54,8 +54,8 @@ func (kv *ShardKV) applyOperation(args *OperationArgs) CommandReply {
 	} else {
 		reply.Err = ErrWrongGroup
 	}
-	debug.Debug(debug.KVOp, "G%d:S%d ApplyOp Finished, args %v rply %v",
-		kv.gid, kv.me, args, reply)
+	debug.Debug(debug.KVOp, "G%d:S%d ApplyOp Finished, args %v rply %v shards %v",
+		kv.gid, kv.me, args, reply, kv.shards)
 	return reply
 }
 

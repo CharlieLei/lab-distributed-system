@@ -52,25 +52,36 @@ func (kv *ShardKV) DeleteShardsData(args *ShardOperationArgs, reply *ShardOperat
 		return
 	}
 
-	defer debug.Debug(debug.KVGc, "G%d:S%d DeleteShardsData Finished args.ConfigNum %d =?= currentCfg.Num %d, args %v rply %v",
-		kv.gid, kv.me, args.ConfigNum, kv.currentCfg.Num, args, reply)
-
 	kv.mu.Lock()
 	if args.ConfigNum > kv.currentCfg.Num {
 		reply.Err = ErrShardNotReady
+		debug.Debug(debug.KVGc, "G%d:S%d DeleteShardsData Finished args.ConfigNum %d > currentCfg.Num %d, args %v rply %v shards %v",
+			kv.gid, kv.me, args.ConfigNum, kv.currentCfg.Num, args, reply, kv.shards)
 		kv.mu.Unlock()
 		return
 	} else if args.ConfigNum < kv.currentCfg.Num {
 		// 旧config上的shard已经被删除，不用再重复删除
 		reply.Err = OK
+		debug.Debug(debug.KVGc, "G%d:S%d DeleteShardsData Finished args.ConfigNum %d < currentCfg.Num %d, args %v rply %v shards %v",
+			kv.gid, kv.me, args.ConfigNum, kv.currentCfg.Num, args, reply, kv.shards)
 		kv.mu.Unlock()
 		return
 	}
 	kv.mu.Unlock()
 
+	kv.mu.Lock()
+	debug.Debug(debug.KVGc, "G%d:S%d DeleteShardsData BEFORE Execute, currCfg.Num %d, args %v shards %v",
+		kv.gid, kv.me, kv.currentCfg.Num, args, kv.shards)
+	kv.mu.Unlock()
+
 	var commandReply CommandReply
 	kv.Execute(Command{CmdDeleteShards, *args}, &commandReply)
 	reply.Err = commandReply.Err
+
+	kv.mu.Lock()
+	debug.Debug(debug.KVGc, "G%d:S%d DeleteShardsData AFTER Execute, currCfg.Num %d, args %v rply %v shards %v",
+		kv.gid, kv.me, kv.currentCfg.Num, args, reply, kv.shards)
+	kv.mu.Unlock()
 }
 
 func (kv *ShardKV) applyDeleteShards(shardsInfo *ShardOperationArgs) CommandReply {

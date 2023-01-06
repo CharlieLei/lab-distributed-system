@@ -219,6 +219,12 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
+func (rf *Raft) HasLogInCurrentTerm() bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.getLastLog().Term == rf.currentTerm
+}
+
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
 // server's port is peers[me]. all the servers' peers[] arrays

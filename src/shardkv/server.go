@@ -86,6 +86,8 @@ func (kv *ShardKV) applier() {
 			case CmdDeleteShards:
 				shardsInfo := command.Data.(ShardOperationArgs)
 				reply = kv.applyDeleteShards(&shardsInfo)
+			case CmdEmptyEntry:
+				reply = kv.applyEmptyEntry()
 			}
 
 			currentTerm, isLeader := kv.rf.GetState()
@@ -165,6 +167,8 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 
 	// Your initialization code here.
 
+	debug.Debug(debug.KVWarn, "G%d:S%d KVServer Init", gid, me)
+
 	// Use something like this to talk to the shardctrler:
 	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
 
@@ -189,6 +193,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	go kv.configUpdater()
 	go kv.shardPuller()
 	go kv.garbageCollector()
+	go kv.logEntryChecker()
 
 	return kv
 }
@@ -225,11 +230,15 @@ func (kv *ShardKV) installSnapshot(snapshot []byte) {
 	var clientSessions map[int64]Session
 	var previousCfg *shardctrler.Config
 	var currentCfg *shardctrler.Config
-	if d.Decode(&shards) != nil || d.Decode(&clientSessions) != nil || d.Decode(&previousCfg) != nil || d.Decode(&currentCfg) != nil {
+	if d.Decode(&shards) != nil ||
+		d.Decode(&clientSessions) != nil ||
+		d.Decode(&previousCfg) != nil ||
+		d.Decode(&currentCfg) != nil {
 		debug.Debug(debug.DError, "S%d KVServer Cannot Deserialize State", kv.me)
 	} else {
-		debug.Debug(debug.KVSnap, "G%d:S%d KVServer Install snapshot, shards[0] 0->%v", kv.gid, kv.me, shards[0].KV["0"])
 		kv.shards, kv.clientSessions, kv.previousCfg, kv.currentCfg = shards, clientSessions, previousCfg, currentCfg
+		debug.Debug(debug.KVSnap, "G%d:S%d KVServer Install snapshot, prevCfg %v currCfg %v shards %v",
+			kv.gid, kv.me, kv.previousCfg, kv.currentCfg, kv.shards)
 	}
 }
 

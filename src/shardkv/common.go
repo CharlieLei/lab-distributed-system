@@ -36,6 +36,7 @@ const (
 	CmdConfig       CommandType = "Config"
 	CmdInsertShards CommandType = "InsertShards"
 	CmdDeleteShards CommandType = "RemoveShards"
+	CmdEmptyEntry   CommandType = "EmptyEntry"
 )
 
 type Command struct {
