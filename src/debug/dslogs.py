@@ -35,7 +35,8 @@ TOPICS = {
     "KVOPER": "#4878bc",
     "KVCNFG": "#fe2c79",
     "KVSHAD": "#98719f",
-    "KVGCOL": "#ffffff"
+    "KVGCOL": "#ffffff",
+    "KVWARN": "#d08341"
 }
 # fmt: on
 

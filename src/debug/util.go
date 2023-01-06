@@ -37,6 +37,7 @@ const (
 	KVConfig logTopic = "KVCNFG"
 	KVShard  logTopic = "KVSHAD"
 	KVGc     logTopic = "KVGCOL"
+	KVWarn   logTopic = "KVWARN"
 )
 
 // Retrieve the verbosity level from an environment variable
