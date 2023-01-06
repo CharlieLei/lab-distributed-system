@@ -42,15 +42,19 @@ func (kv *ShardKV) applyConfig(nextCfg *shardctrler.Config) CommandReply {
 	// apply的时候可能有很早之前的请求，此时传入的nextCfg是之前已经更新过的
 	var reply CommandReply
 	if nextCfg.Num == kv.currentCfg.Num+1 {
-		kv.previousCfg = kv.currentCfg
-		kv.currentCfg = nextCfg
-		for shardId, groupId := range nextCfg.Shards {
-			if kv.shards[shardId].Status == WORKING && groupId != kv.gid {
-				kv.shards[shardId].Status = INVALID
-			} else if kv.shards[shardId].Status == INVALID && groupId == kv.gid {
-				kv.shards[shardId].Status = PULLING
+		for shardId := 0; shardId < shardctrler.NShards; shardId++ {
+			shard := kv.shards[shardId]
+			currGroupId, nextGroupId := kv.currentCfg.Shards[shardId], nextCfg.Shards[shardId]
+			if shard.Status == INVALID {
+				shard.Status = WORKING
+			} else if currGroupId == kv.gid && nextGroupId != kv.gid {
+				shard.Status = BEPULLING
+			} else if currGroupId != kv.gid && nextGroupId == kv.gid {
+				shard.Status = PULLING
 			}
 		}
+		kv.previousCfg = kv.currentCfg
+		kv.currentCfg = nextCfg
 		reply.Err = OK
 	} else {
 		reply.Err = ErrOutDated

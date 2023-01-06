@@ -28,7 +28,7 @@ func (kv *ShardKV) shardPuller() {
 					for _, server := range servers {
 						var reply ShardOperationReply
 						srv := kv.make_end(server)
-						debug.Debug(debug.KVShard, "G%d:S%d Start GetShardsData Send to Server %v, shardMigArgs %v",
+						debug.Debug(debug.KVShard, "G%d:S%d Start GetShardsData Send to Server %v, shardOpArgs %v",
 							kv.gid, kv.me, server, args)
 						ok := srv.Call("ShardKV.GetShardsData", &args, &reply)
 						if ok && reply.Err == OK {
@@ -51,14 +51,12 @@ func (kv *ShardKV) GetShardsData(args *ShardOperationArgs, reply *ShardOperation
 	// 只有group中的leader才能够发送shard
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Err = ErrWrongLeader
-		debug.Debug(debug.KVShard, "G%d:S%d GetShardsData Finished, args %v rply %v",
-			kv.gid, kv.me, args, reply)
 		return
 	}
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
-	defer debug.Debug(debug.KVShard, "G%d:S%d GetShardsData Finished, args %v rply %v",
-		kv.gid, kv.me, args, reply)
+	defer debug.Debug(debug.KVShard, "G%d:S%d GetShardsData Finished, args %v rply {%v %v} shards %v",
+		kv.gid, kv.me, args, reply.Err, reply.ConfigNum, kv.shards)
 	if args.ConfigNum > kv.currentCfg.Num {
 		reply.Err = ErrShardNotReady
 		return

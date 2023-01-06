@@ -1,12 +1,15 @@
 package shardkv
 
+import "fmt"
+
 type ShardStatus string
 
 const (
-	INVALID ShardStatus = "invalid"
-	WORKING ShardStatus = "working"
-	PULLING ShardStatus = "pulling"
-	GCING   ShardStatus = "gcing" // 该shard已经从其他group中获取，需要删除其他group中的该shard
+	INVALID   ShardStatus = "invalid" // 只用于初始化
+	WORKING   ShardStatus = "working"
+	PULLING   ShardStatus = "pulling"
+	BEPULLING ShardStatus = "bepulling" // 该shard已被移出server所在的raft组，但新的raft组还没有获取该shard
+	GCING     ShardStatus = "gcing"     // 该shard已经从其他group中获取，需要删除其他group中的该shard
 )
 
 type Shard struct {
@@ -15,8 +18,7 @@ type Shard struct {
 }
 
 func NewShard() *Shard {
-	// 避免初始后h第1个
-	return &Shard{WORKING, make(map[string]string)}
+	return &Shard{INVALID, make(map[string]string)}
 }
 
 func (shard *Shard) Get(key string) (string, ErrType) {
@@ -49,5 +51,5 @@ func (shard *Shard) clear() {
 }
 
 func (shard *Shard) String() string {
-	return string(shard.Status)
+	return fmt.Sprintf("(%v, %d)", string(shard.Status), len(shard.KV))
 }
