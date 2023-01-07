@@ -11,19 +11,19 @@ import (
 	"time"
 )
 
+func nrand() int64 {
+	max := big.NewInt(int64(1) << 62)
+	bigx, _ := rand.Int(rand.Reader, max)
+	x := bigx.Int64()
+	return x
+}
+
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// Your data here.
 	clientId    int64
 	sequenceNum int // 当前最后一个已发送command的id
 	leaderId    int
-}
-
-func nrand() int64 {
-	max := big.NewInt(int64(1) << 62)
-	bigx, _ := rand.Int(rand.Reader, max)
-	x := bigx.Int64()
-	return x
 }
 
 func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {

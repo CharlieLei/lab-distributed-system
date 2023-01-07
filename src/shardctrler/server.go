@@ -9,17 +9,6 @@ import (
 	"time"
 )
 
-const ClientRequestTimeout = 100 * time.Millisecond
-
-type Command struct {
-	Args *CommandArgs
-}
-
-type Session struct {
-	LastSequenceNum int
-	LastReply       CommandReply
-}
-
 type ShardCtrler struct {
 	mu      sync.Mutex
 	me      int
@@ -27,9 +16,9 @@ type ShardCtrler struct {
 	applyCh chan raft.ApplyMsg
 
 	// Your data here.
-	configs        []Config // indexed by config num
+	stateMachine   *ConfigStateMachine
 	clientSessions map[int64]Session
-	notifyChans    map[int]chan CommandReply // 键值是对应日志的index，不是clientId
+	notifyChans    map[int]chan *CommandReply // 键值是对应日志的index，不是clientId
 	lastApplied    int
 }
 
@@ -70,7 +59,7 @@ func (sc *ShardCtrler) applier() {
 			continue
 		}
 		sc.mu.Lock()
-		args := message.Command.(Command).Args
+		command := message.Command.(Command)
 
 		if sc.lastApplied >= message.CommandIndex {
 			sc.mu.Unlock()
@@ -78,13 +67,13 @@ func (sc *ShardCtrler) applier() {
 		}
 		sc.lastApplied = message.CommandIndex
 
-		var reply CommandReply
-		if !args.isReadOnly() && sc.isDuplicateRequest(args.ClientId, args.SequenceNum) {
-			reply = sc.clientSessions[args.ClientId].LastReply
+		var reply *CommandReply
+		if !command.isReadOnly() && sc.isDuplicateRequest(command.ClientId, command.SequenceNum) {
+			reply = sc.clientSessions[command.ClientId].LastReply
 		} else {
-			sc.applyLog(args, &reply)
-			if !args.isReadOnly() {
-				sc.clientSessions[args.ClientId] = Session{args.SequenceNum, reply}
+			reply = sc.applyLog(&command)
+			if !command.isReadOnly() {
+				sc.clientSessions[command.ClientId] = Session{command.SequenceNum, reply}
 			}
 		}
 
@@ -97,63 +86,23 @@ func (sc *ShardCtrler) applier() {
 	}
 }
 
-func (sc *ShardCtrler) applyLog(args *CommandArgs, reply *CommandReply) {
-	switch args.Op {
+func (sc *ShardCtrler) applyLog(command *Command) *CommandReply {
+	var reply CommandReply
+	switch command.Op {
 	case OpJoin:
-		reply.Err = sc.Join(args.Servers)
+		reply.Err = sc.stateMachine.Join(command.Servers)
 	case OpLeave:
-		reply.Err = sc.Leave(args.GIDs)
+		reply.Err = sc.stateMachine.Leave(command.GIDs)
 	case OpMove:
-		reply.Err = sc.Move(args.Shard, args.GID)
+		reply.Err = sc.stateMachine.Move(command.Shard, command.GID)
 	case OpQuery:
-		reply.Err, reply.Config = sc.Query(args.Num)
+		reply.Err, reply.Config = sc.stateMachine.Query(command.Num)
 	default:
 		panic("WRONG CommandArgs OpType")
 	}
-	debug.Debug(debug.CTServer, "S%d Command %v, configs %v, rply %v",
-		sc.me, args, sc.configs, reply)
-}
-
-func (sc *ShardCtrler) Join(groups map[int][]string) ErrType {
-	// Your code here.
-	newCfg := sc.configs[len(sc.configs)-1].copy()
-	newCfg.Num++
-	for groupId, shards := range groups {
-		newCfg.Groups[groupId] = shards
-	}
-	newCfg.reAllocateGid()
-	sc.configs = append(sc.configs, newCfg)
-	return OK
-}
-
-func (sc *ShardCtrler) Leave(gids []int) ErrType {
-	// Your code here.
-	newCfg := sc.configs[len(sc.configs)-1].copy()
-	newCfg.Num++
-	for _, groupId := range gids {
-		delete(newCfg.Groups, groupId)
-	}
-	newCfg.reAllocateGid()
-	sc.configs = append(sc.configs, newCfg)
-	return OK
-}
-
-func (sc *ShardCtrler) Move(shard int, gid int) ErrType {
-	// Your code here.
-	newCfg := sc.configs[len(sc.configs)-1].copy()
-	newCfg.Num++
-	newCfg.Shards[shard] = gid
-	sc.configs = append(sc.configs, newCfg)
-	return OK
-}
-
-func (sc *ShardCtrler) Query(num int) (ErrType, Config) {
-	// Your code here.
-	queryIdx := num
-	if num == -1 || num >= len(sc.configs) {
-		queryIdx = len(sc.configs) - 1
-	}
-	return OK, sc.configs[queryIdx]
+	debug.Debug(debug.CTServer, "S%d Command %v, StateMachine %v, rply %v",
+		sc.me, command, sc.stateMachine, reply)
+	return &reply
 }
 
 // the tester calls Kill() when a ShardCtrler instance won't
@@ -175,30 +124,26 @@ func (sc *ShardCtrler) Raft() *raft.Raft {
 // form the fault-tolerant shardctrler service.
 // me is the index of the current server in servers[].
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardCtrler {
-	sc := new(ShardCtrler)
-	sc.me = me
-
-	sc.configs = make([]Config, 1)
-	sc.configs[0].Groups = map[int][]string{}
-
 	labgob.Register(Command{})
-	sc.applyCh = make(chan raft.ApplyMsg)
-	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
 
-	// Your code here.
-	sc.configs = make([]Config, 1)
-	sc.clientSessions = make(map[int64]Session)
-	sc.notifyChans = make(map[int]chan CommandReply)
-	sc.lastApplied = 0
-
+	applyCh := make(chan raft.ApplyMsg)
+	sc := &ShardCtrler{
+		me:             me,
+		rf:             raft.Make(servers, me, persister, applyCh),
+		applyCh:        applyCh,
+		stateMachine:   NewConfigStateMachine(),
+		clientSessions: make(map[int64]Session),
+		notifyChans:    make(map[int]chan *CommandReply),
+		lastApplied:    0,
+	}
 	go sc.applier()
 
 	return sc
 }
 
-func (sc *ShardCtrler) getNotifyChan(logIndex int) chan CommandReply {
+func (sc *ShardCtrler) getNotifyChan(logIndex int) chan *CommandReply {
 	if _, ok := sc.notifyChans[logIndex]; !ok {
-		sc.notifyChans[logIndex] = make(chan CommandReply, 1)
+		sc.notifyChans[logIndex] = make(chan *CommandReply, 1)
 	}
 	return sc.notifyChans[logIndex]
 }

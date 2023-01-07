@@ -2,6 +2,7 @@ package shardctrler
 
 import (
 	"sort"
+	"time"
 )
 
 //
@@ -24,14 +25,6 @@ import (
 // The number of shards.
 const NShards = 10
 
-// A configuration -- an assignment of shards to groups.
-// Please don't change this.
-type Config struct {
-	Num    int              // config number
-	Shards [NShards]int     // shard -> gid
-	Groups map[int][]string // gid -> servers[]
-}
-
 type ErrType string
 
 const (
@@ -49,6 +42,17 @@ const (
 	OpQuery OpType = "Query"
 )
 
+const ClientRequestTimeout = 100 * time.Millisecond
+
+type Command struct {
+	*CommandArgs
+}
+
+type Session struct {
+	LastSequenceNum int
+	LastReply       *CommandReply
+}
+
 type CommandArgs struct {
 	ClientId    int64
 	SequenceNum int // 就是command的id
@@ -60,13 +64,21 @@ type CommandArgs struct {
 	Num         int              // for Query, desired config number
 }
 
+func (args *CommandArgs) isReadOnly() bool {
+	return args.Op == OpQuery
+}
+
 type CommandReply struct {
 	Err    ErrType
 	Config Config
 }
 
-func (args *CommandArgs) isReadOnly() bool {
-	return args.Op == OpQuery
+// A configuration -- an assignment of shards to groups.
+// Please don't change this.
+type Config struct {
+	Num    int              // config number
+	Shards [NShards]int     // shard -> gid
+	Groups map[int][]string // gid -> servers[]
 }
 
 func (cfg *Config) copy() Config {
