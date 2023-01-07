@@ -10,30 +10,30 @@
 type OpType string
 
 const (
-OpJoin  OpType = "Join"
-OpLeave OpType = "Leave"
-OpMove  OpType = "Move"
-OpQuery OpType = "Query"
+    OpJoin  OpType = "Join"
+    OpLeave OpType = "Leave"
+    OpMove  OpType = "Move"
+    OpQuery OpType = "Query"
 )
 
 type CommandArgs struct {
-ClientId    int64
-SequenceNum int // 就是command的id
-Op          OpType
-Servers     map[int][]string // for Join, new GID -> servers mappings
-GIDs        []int            // for Leave
-Shard       int              // for Move
-GID         int              // for Move
-Num         int              // for Query, desired config number
+    ClientId    int64
+    SequenceNum int // 就是command的id
+    Op          OpType
+    Servers     map[int][]string // for Join, new GID -> servers mappings
+    GIDs        []int            // for Leave
+    Shard       int              // for Move
+    GID         int              // for Move
+    Num         int              // for Query, desired config number
 }
 
 func (args *CommandArgs) isReadOnly() bool {
-return args.Op == OpQuery
+    return args.Op == OpQuery
 }
 
 type CommandReply struct {
-Err    ErrType
-Config Config
+    Err    ErrType
+    Config Config
 }
 ```
 
@@ -1172,18 +1172,18 @@ for _, shardId := range shardsInfo.ShardIds {
 
 ```go
 func (kv *ShardKV) logEntryChecker() {
-for {
-if _, isLeader := kv.rf.GetState(); isLeader {
-if !kv.rf.HasLogInCurrentTerm() {
-kv.Execute(Command{CmdEmptyEntry, nil}, &CommandReply{})
-}
-}
-time.Sleep(200 * time.Millisecond)
-}
+    for {
+        if _, isLeader := kv.rf.GetState(); isLeader {
+            if !kv.rf.HasLogInCurrentTerm() {
+                kv.Execute(Command{CmdEmptyEntry, nil}, &CommandReply{})
+            }
+        }
+        time.Sleep(200 * time.Millisecond)
+	}
 }
 
 func (kv *ShardKV) applyEmptyEntry() CommandReply {
-return CommandReply{OK, ""}
+    return CommandReply{OK, ""}
 }
 ```
 
