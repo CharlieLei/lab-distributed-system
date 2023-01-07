@@ -11,17 +11,6 @@ import (
 	"time"
 )
 
-const ClientRequestTimeout = 100 * time.Millisecond
-
-type Command struct {
-	Args *CommandArgs
-}
-
-type Session struct {
-	LastSequenceNum int
-	LastReply       CommandReply
-}
-
 type KVServer struct {
 	mu      sync.Mutex
 	me      int
@@ -32,10 +21,10 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	kvmap          map[string]string
-	clientSessions map[int64]Session
-	notifyChans    map[int]chan CommandReply // 键值是对应日志的index，不是clientId
 	persister      *raft.Persister
+	stateMachine   KVStateMachine
+	clientSessions map[int64]Session
+	notifyChans    map[int]chan *CommandReply // 键值是对应日志的index，不是clientId
 	lastApplied    int
 }
 
@@ -80,7 +69,7 @@ func (kv *KVServer) applier() {
 		for message := range kv.applyCh {
 			if message.CommandValid {
 				kv.mu.Lock()
-				args := message.Command.(Command).Args
+				command := message.Command.(Command)
 
 				if kv.lastApplied >= message.CommandIndex {
 					debug.Debug(debug.KVServer, "S%v Recv Outdated Msg %v Due to newer Snapshot installed, Not Apply, lastApplied %v", kv.me, message, kv.lastApplied)
@@ -89,14 +78,15 @@ func (kv *KVServer) applier() {
 				}
 				kv.lastApplied = message.CommandIndex
 
-				var reply CommandReply
-				if !args.isReadOnly() && kv.isDuplicateRequest(args.ClientId, args.SequenceNum) {
-					reply = kv.clientSessions[args.ClientId].LastReply
-					debug.Debug(debug.KVServer, "S%v Apply Duplicate Command %v Result {%v, %v}", kv.me, args, reply.Err, len(reply.Value))
+				var reply *CommandReply
+				if !command.isReadOnly() && kv.isDuplicateRequest(command.ClientId, command.SequenceNum) {
+					reply = kv.clientSessions[command.ClientId].LastReply
+					debug.Debug(debug.KVServer, "S%v Apply Duplicate Command %v Result {%v, %v}",
+						kv.me, command, reply.Err, len(reply.Value))
 				} else {
-					kv.applyLog(args, &reply)
-					if !args.isReadOnly() {
-						kv.clientSessions[args.ClientId] = Session{args.SequenceNum, reply}
+					reply = kv.applyLog(&command)
+					if !command.isReadOnly() {
+						kv.clientSessions[command.ClientId] = Session{command.SequenceNum, reply}
 					}
 				}
 
@@ -107,21 +97,21 @@ func (kv *KVServer) applier() {
 				}
 
 				if kv.needSnapshot() {
-					debug.Debug(debug.KVSnap, "S%d KVServer Take Snapshot, Msg %v, KVMAP[0]: %v",
-						kv.me, message, len(kv.kvmap["0"]))
+					debug.Debug(debug.KVSnap, "S%d KVServer Take Snapshot, Msg %v",
+						kv.me, message)
 					snapshot := kv.takeSnapshot()
 					kv.rf.Snapshot(message.CommandIndex, snapshot)
 				}
 				kv.mu.Unlock()
 			} else if message.SnapshotValid {
 				kv.mu.Lock()
-				debug.Debug(debug.KVSnap, "S%d KVServer Try Install Snapshot %d, KVMAP[0]: %v",
-					kv.me, message.SnapshotIndex, len(kv.kvmap["0"]))
+				debug.Debug(debug.KVSnap, "S%d KVServer Try Install Snapshot %d",
+					kv.me, message.SnapshotIndex)
 				if kv.rf.CondInstallSnapshot(message.SnapshotTerm, message.SnapshotIndex, message.Snapshot) {
 					kv.installSnapshot(message.Snapshot)
 					kv.lastApplied = message.SnapshotIndex
-					debug.Debug(debug.KVSnap, "S%d KVServer Install Snapshot %d Finished, KVMAP[0]: %v",
-						kv.me, message.SnapshotIndex, len(kv.kvmap["0"]))
+					debug.Debug(debug.KVSnap, "S%d KVServer Install Snapshot %d Finished",
+						kv.me, message.SnapshotIndex)
 				}
 				kv.mu.Unlock()
 			}
@@ -129,28 +119,23 @@ func (kv *KVServer) applier() {
 	}
 }
 
-func (kv *KVServer) applyLog(args *CommandArgs, reply *CommandReply) {
-	switch args.Op {
-	case OpPut:
-		kv.kvmap[args.Key] = args.Value
-		reply.Value = kv.kvmap[args.Key]
-	case OpAppend:
-		kv.kvmap[args.Key] += args.Value
-		reply.Value = kv.kvmap[args.Key]
+func (kv *KVServer) applyLog(command *Command) *CommandReply {
+	var reply CommandReply
+	switch command.Op {
 	case OpGet:
-		if val, ok := kv.kvmap[args.Key]; ok {
-			reply.Value = val
-		} else {
-			reply.Value = ""
-		}
+		reply.Err, reply.Value = kv.stateMachine.Get(command.Key)
+	case OpPut:
+		reply.Err = kv.stateMachine.Put(command.Key, command.Value)
+	case OpAppend:
+		reply.Err = kv.stateMachine.Append(command.Key, command.Value)
 	}
-	reply.Err = OK
+	return &reply
 }
 
 func (kv *KVServer) takeSnapshot() []byte {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	e.Encode(kv.kvmap)
+	e.Encode(kv.stateMachine)
 	e.Encode(kv.clientSessions)
 	snapshot := w.Bytes()
 	return snapshot
@@ -162,12 +147,12 @@ func (kv *KVServer) installSnapshot(snapshot []byte) {
 	}
 	r := bytes.NewBuffer(snapshot)
 	d := labgob.NewDecoder(r)
-	var kvmap map[string]string
+	var stateMachine KVStateMachine
 	var clientSessions map[int64]Session
-	if d.Decode(&kvmap) != nil || d.Decode(&clientSessions) != nil {
+	if d.Decode(&stateMachine) != nil || d.Decode(&clientSessions) != nil {
 		debug.Debug(debug.DError, "S%d KVServer Cannot Deserialize State", kv.me)
 	} else {
-		kv.kvmap, kv.clientSessions = kvmap, clientSessions
+		kv.stateMachine, kv.clientSessions = stateMachine, clientSessions
 	}
 }
 
@@ -207,24 +192,20 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// Go's RPC library to marshall/unmarshall.
 	labgob.Register(Command{})
 
-	kv := new(KVServer)
-	kv.me = me
-	kv.maxraftstate = maxraftstate
-
-	// You may need initialization code here.
-
-	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-	kv.kvmap = make(map[string]string)
-	kv.clientSessions = make(map[int64]Session)
-	kv.notifyChans = make(map[int]chan CommandReply)
-	kv.persister = persister
-	kv.lastApplied = 0
-
+	applyCh := make(chan raft.ApplyMsg)
+	kv := &KVServer{
+		me:             me,
+		rf:             raft.Make(servers, me, persister, applyCh),
+		applyCh:        applyCh,
+		maxraftstate:   maxraftstate,
+		persister:      persister,
+		stateMachine:   NewKVStateMachine(),
+		clientSessions: make(map[int64]Session),
+		notifyChans:    make(map[int]chan *CommandReply),
+		lastApplied:    0,
+	}
 	snapshot := persister.ReadSnapshot()
 	kv.installSnapshot(snapshot)
-
-	// You may need initialization code here.
 
 	go kv.applier()
 
@@ -237,9 +218,9 @@ func (kv *KVServer) isDuplicateRequest(clientId int64, sequenceNum int) bool {
 	return ok && sequenceNum <= session.LastSequenceNum
 }
 
-func (kv *KVServer) getNotifyChan(logIndex int) chan CommandReply {
+func (kv *KVServer) getNotifyChan(logIndex int) chan *CommandReply {
 	if _, ok := kv.notifyChans[logIndex]; !ok {
-		kv.notifyChans[logIndex] = make(chan CommandReply, 1)
+		kv.notifyChans[logIndex] = make(chan *CommandReply, 1)
 	}
 	return kv.notifyChans[logIndex]
 }
