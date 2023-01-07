@@ -41,19 +41,19 @@ type CommandReply struct {
 
 ```go
 func (sc *ShardCtrler) Move(shard int, gid int) ErrType {
-	newCfg := sc.configs[len(sc.configs)-1].copy()
-	newCfg.Num++
-	newCfg.Shards[shard] = gid
-	sc.configs = append(sc.configs, newCfg)
-	return OK
+    newCfg := sc.configs[len(sc.configs)-1].copy()
+    newCfg.Num++
+    newCfg.Shards[shard] = gid
+    sc.configs = append(sc.configs, newCfg)
+    return OK
 }
 
 func (sc *ShardCtrler) Query(num int) (ErrType, Config) {
-	queryIdx := num
-	if num == -1 || num >= len(sc.configs) {
-		queryIdx = len(sc.configs) - 1
-	}
-	return OK, sc.configs[queryIdx]
+    queryIdx := num
+    if num == -1 || num >= len(sc.configs) {
+        queryIdx = len(sc.configs) - 1
+    }
+    return OK, sc.configs[queryIdx]
 }
 ```
 
@@ -61,66 +61,66 @@ func (sc *ShardCtrler) Query(num int) (ErrType, Config) {
 
 ```go
 func (sc *ShardCtrler) Join(groups map[int][]string) ErrType {
-	newCfg := sc.configs[len(sc.configs)-1].copy()
-	newCfg.Num++
-	for groupId, shards := range groups {
-		newCfg.Groups[groupId] = shards
-	}
-	newCfg.reAllocateGid()
-	sc.configs = append(sc.configs, newCfg)
-	return OK
+    newCfg := sc.configs[len(sc.configs)-1].copy()
+    newCfg.Num++
+    for groupId, shards := range groups {
+        newCfg.Groups[groupId] = shards
+    }
+    newCfg.reAllocateGid()
+    sc.configs = append(sc.configs, newCfg)
+    return OK
 }
 
 func (sc *ShardCtrler) Leave(gids []int) ErrType {
-	newCfg := sc.configs[len(sc.configs)-1].copy()
-	newCfg.Num++
-	for _, groupId := range gids {
-		delete(newCfg.Groups, groupId)
-	}
-	newCfg.reAllocateGid()
-	sc.configs = append(sc.configs, newCfg)
-	return OK
+    newCfg := sc.configs[len(sc.configs)-1].copy()
+    newCfg.Num++
+    for _, groupId := range gids {
+        delete(newCfg.Groups, groupId)
+    }
+    newCfg.reAllocateGid()
+    sc.configs = append(sc.configs, newCfg)
+    return OK
 }
 
 func (cfg *Config) reAllocateGid() {
-	for shardId, groupId := range cfg.Shards {
-		if _, ok := cfg.Groups[groupId]; !ok {
-			// 该分片对应的group已经被移除了，group 0中的分片属于未分配的
-			cfg.Shards[shardId] = 0
-		}
-	}
+    for shardId, groupId := range cfg.Shards {
+        if _, ok := cfg.Groups[groupId]; !ok {
+            // 该分片对应的group已经被移除了，group 0中的分片属于未分配的
+            cfg.Shards[shardId] = 0
+        }
+    }
 
-	if len(cfg.Groups) == 0 {
-		return
-	}
+    if len(cfg.Groups) == 0 {
+        return
+    }
 
-	// 找出每个group中的分片
-	group2shards := make(map[int][]int)
-	group2shards[0] = make([]int, 0)
-	for groupId := range cfg.Groups {
-		group2shards[groupId] = make([]int, 0)
-	}
-	for shardId, groupId := range cfg.Shards {
-		group2shards[groupId] = append(group2shards[groupId], shardId)
-	}
+    // 找出每个group中的分片
+    group2shards := make(map[int][]int)
+    group2shards[0] = make([]int, 0)
+    for groupId := range cfg.Groups {
+        group2shards[groupId] = make([]int, 0)
+    }
+    for shardId, groupId := range cfg.Shards {
+        group2shards[groupId] = append(group2shards[groupId], shardId)
+    }
 
-	for {
-		srcGid, tgtGid := getGidWithMaxShards(group2shards), getGidWithMinShards(group2shards)
-		if srcGid != 0 && len(group2shards[srcGid])-len(group2shards[tgtGid]) <= 1 {
-			break
-		}
-		group2shards[tgtGid] = append(group2shards[tgtGid], group2shards[srcGid][0])
-		group2shards[srcGid] = group2shards[srcGid][1:]
-	}
+    for {
+        srcGid, tgtGid := getGidWithMaxShards(group2shards), getGidWithMinShards(group2shards)
+        if srcGid != 0 && len(group2shards[srcGid])-len(group2shards[tgtGid]) <= 1 {
+            break
+        }
+        group2shards[tgtGid] = append(group2shards[tgtGid], group2shards[srcGid][0])
+        group2shards[srcGid] = group2shards[srcGid][1:]
+    }
 
-	var newShards [NShards]int
-	for groupId, shards := range group2shards {
-		for _, shard := range shards {
-			newShards[shard] = groupId
-		}
-	}
+    var newShards [NShards]int
+    for groupId, shards := range group2shards {
+        for _, shard := range shards {
+            newShards[shard] = groupId
+        }
+    }
 
-	cfg.Shards = newShards
+    cfg.Shards = newShards
 }
 ```
 
@@ -128,41 +128,41 @@ func (cfg *Config) reAllocateGid() {
 
 ```go
 func getGidWithMinShards(group2shards map[int][]int) int {
-	var groups []int
-	for groupId := range group2shards {
-		groups = append(groups, groupId)
-	}
-	// 确保map的遍历结果是确定性的
-	sort.Ints(groups)
-	minGid, minCnt := -1, NShards+1
-	for _, groupId := range groups {
-		if groupId != 0 && len(group2shards[groupId]) < minCnt {
-			minGid, minCnt = groupId, len(group2shards[groupId])
-		}
-	}
-	return minGid
+    var groups []int
+    for groupId := range group2shards {
+        groups = append(groups, groupId)
+    }
+    // 确保map的遍历结果是确定性的
+    sort.Ints(groups)
+    minGid, minCnt := -1, NShards+1
+    for _, groupId := range groups {
+        if groupId != 0 && len(group2shards[groupId]) < minCnt {
+            minGid, minCnt = groupId, len(group2shards[groupId])
+        }
+    }
+    return minGid
 }
 
 func getGidWithMaxShards(group2shards map[int][]int) int {
-	// 总是先从group 0中获得分片
-	if shards, ok := group2shards[0]; ok && len(shards) > 0 {
-		return 0
-	}
+    // 总是先从group 0中获得分片
+    if shards, ok := group2shards[0]; ok && len(shards) > 0 {
+        return 0
+    }
 
-	var groups []int
-	for groupId := range group2shards {
-		groups = append(groups, groupId)
-	}
-	// 确保map的遍历结果是确定性的
-	sort.Ints(groups)
-	maxGid, maxCnt := -1, -1
-	for _, groupId := range groups {
-		if len(group2shards[groupId]) > maxCnt {
-			// 可能group2shards中只有group 0了，因此不能排除groupId=0的情况
-			maxGid, maxCnt = groupId, len(group2shards[groupId])
-		}
-	}
-	return maxGid
+    var groups []int
+    for groupId := range group2shards {
+        groups = append(groups, groupId)
+    }
+    // 确保map的遍历结果是确定性的
+    sort.Ints(groups)
+    maxGid, maxCnt := -1, -1
+    for _, groupId := range groups {
+        if len(group2shards[groupId]) > maxCnt {
+            // 可能group2shards中只有group 0了，因此不能排除groupId=0的情况
+            maxGid, maxCnt = groupId, len(group2shards[groupId])
+        }
+    }
+    return maxGid
 }
 ```
 
@@ -712,24 +712,24 @@ func (kv *ShardKV) applyEmptyEntry() *CommandReply {
 
 ```go
 type Shard struct {
-	KV     map[string]string
+    KV     map[string]string
 }
 
 func (shard *Shard) Get(key string) (string, ErrType) {
-	if val, ok := shard.KV[key]; ok {
-		return val, OK
-	}
-	return "", ErrNoKey
+    if val, ok := shard.KV[key]; ok {
+        return val, OK
+    }
+    return "", ErrNoKey
 }
 
 func (shard *Shard) Put(key string, value string) ErrType {
-	shard.KV[key] = value
-	return OK
+    shard.KV[key] = value
+    return OK
 }
 
 func (shard *Shard) Append(key string, value string) ErrType {
-	shard.KV[key] += value
-	return OK
+    shard.KV[key] += value
+    return OK
 }
 ```
 
@@ -1179,7 +1179,7 @@ func (kv *ShardKV) logEntryChecker() {
             }
         }
         time.Sleep(200 * time.Millisecond)
-	}
+    }
 }
 
 func (kv *ShardKV) applyEmptyEntry() CommandReply {
