@@ -43,7 +43,7 @@ type Clerk struct {
 	// You will have to modify this struct.
 	clientId    int64
 	sequenceNum int
-	leaderId    int
+	leaderIds   map[int]int // gid -> leaderId
 }
 
 // the tester calls MakeClerk.
@@ -60,7 +60,7 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 	// You'll have to add code here.
 	ck.clientId = nrand()
 	ck.sequenceNum = 0
-	ck.leaderId = 0
+	ck.leaderIds = make(map[int]int)
 	return ck
 }
 
@@ -87,20 +87,24 @@ func (ck *Clerk) sendCommand(args *OperationArgs) string {
 		shard := key2shard(args.Key)
 		gid := ck.config.Shards[shard]
 		if servers, ok := ck.config.Groups[gid]; ok {
+			if _, ok = ck.leaderIds[gid]; !ok {
+				ck.leaderIds[gid] = 0
+			}
+			leaderId := ck.leaderIds[gid]
 			for range servers {
 				var reply CommandReply
-				srv := ck.make_end(servers[ck.leaderId])
+				srv := ck.make_end(servers[leaderId])
 				ok := srv.Call("ShardKV.ExecOperation", args, &reply)
-				if ok && reply.Err == OK {
-					debug.Debug(debug.KVClient, "C%d Send Command To S%d Success args %v, rply {%v, %v}",
-						ck.clientId, ck.leaderId, args, reply.Err, reply.Value)
+				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+					debug.Debug(debug.KVClient, "C%d Send Command To G%d:S%d Success args %v, rply {%v, %v}",
+						ck.clientId, gid, leaderId, args, reply.Err, reply.Value)
 					ck.sequenceNum++
+					ck.leaderIds[gid] = leaderId
 					return reply.Value
-				}
-				if ok && reply.Err == ErrWrongGroup {
+				} else if ok && reply.Err == ErrWrongGroup {
 					break
 				}
-				ck.leaderId = (ck.leaderId + 1) % len(servers)
+				leaderId = (leaderId + 1) % len(servers)
 			}
 		}
 		time.Sleep(100 * time.Millisecond)
