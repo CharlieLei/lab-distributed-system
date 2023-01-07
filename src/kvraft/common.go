@@ -1,5 +1,9 @@
 package kvraft
 
+import "time"
+
+const ClientRequestTimeout = 100 * time.Millisecond
+
 type ErrType string
 
 const (
@@ -16,6 +20,15 @@ const (
 	OpAppend OpType = "Append"
 )
 
+type Command struct {
+	*CommandArgs
+}
+
+type Session struct {
+	LastSequenceNum int
+	LastReply       *CommandReply
+}
+
 type CommandArgs struct {
 	ClientId    int64
 	SequenceNum int // 就是command的id
@@ -24,11 +37,11 @@ type CommandArgs struct {
 	Value       string
 }
 
+func (args *CommandArgs) isReadOnly() bool {
+	return args.Op == OpGet
+}
+
 type CommandReply struct {
 	Err   ErrType
 	Value string
-}
-
-func (args *CommandArgs) isReadOnly() bool {
-	return args.Op == OpGet
 }
