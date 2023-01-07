@@ -1,5 +1,7 @@
 package shardkv
 
+import "time"
+
 //
 // Sharded key/value server.
 // Lots of replica groups, each running Raft.
@@ -8,6 +10,14 @@ package shardkv
 //
 // You will have to modify these definitions.
 //
+
+const (
+	ClientRequestTimeout  = 100 * time.Millisecond
+	UpdateConfigTimeout   = 80 * time.Millisecond
+	MigrateShardsTimeout  = 50 * time.Millisecond
+	CollectGarbageTimeout = 50 * time.Millisecond
+	CheckLogEntryTimeout  = 200 * time.Millisecond
+)
 
 type ErrType string
 
@@ -46,12 +56,12 @@ type Command struct {
 
 type Session struct {
 	LastSequenceNum int
-	LastReply       CommandReply
+	LastReply       *CommandReply
 }
 
 func (s *Session) deepcopy() Session {
 	reply := CommandReply{s.LastReply.Err, s.LastReply.Value}
-	return Session{s.LastSequenceNum, reply}
+	return Session{s.LastSequenceNum, &reply}
 }
 
 type OperationArgs struct {

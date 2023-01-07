@@ -16,7 +16,7 @@ type ShardCtrler struct {
 	applyCh chan raft.ApplyMsg
 
 	// Your data here.
-	stateMachine   *ConfigStateMachine
+	stateMachine   ConfigStateMachine
 	clientSessions map[int64]Session
 	notifyChans    map[int]chan *CommandReply // 键值是对应日志的index，不是clientId
 	lastApplied    int

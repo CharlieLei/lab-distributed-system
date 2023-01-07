@@ -8,10 +8,9 @@ import (
 	"6.824/shardctrler"
 	"bytes"
 	"sync"
+	"sync/atomic"
 	"time"
 )
-
-const ClientRequestTimeout = 100 * time.Millisecond
 
 type ShardKV struct {
 	mu       sync.Mutex
@@ -21,15 +20,16 @@ type ShardKV struct {
 	make_end func(string) *labrpc.ClientEnd
 	gid      int
 	ctrlers  []*labrpc.ClientEnd
+	dead     int32
 
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
 	mck            *shardctrler.Clerk
-	shards         map[int]*Shard // shardId -> pointer of Shard obj
-	clientSessions map[int64]Session
-	notifyChans    map[int]chan CommandReply
 	persister      *raft.Persister
+	shards         map[int]*Shard // shardId -> pointer of Shard obj, Shard obj == StateMachine
+	clientSessions map[int64]Session
+	notifyChans    map[int]chan *CommandReply
 	lastApplied    int
 	previousCfg    *shardctrler.Config
 	currentCfg     *shardctrler.Config
@@ -69,7 +69,7 @@ func (kv *ShardKV) applier() {
 			}
 			kv.lastApplied = message.CommandIndex
 
-			var reply CommandReply
+			var reply *CommandReply
 			command := message.Command.(Command)
 			debug.Debug(debug.KVServer, "G%d:S%d Start Apply Command %v, message %v",
 				kv.gid, kv.me, command, message)
@@ -119,8 +119,12 @@ func (kv *ShardKV) applier() {
 // in Kill(), but it might be convenient to (for example)
 // turn off debug output from this instance.
 func (kv *ShardKV) Kill() {
+	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
-	// Your code here, if desired.
+}
+
+func (kv *ShardKV) killed() bool {
+	return atomic.LoadInt32(&kv.dead) == 1
 }
 
 // servers[] contains the ports of the servers in this group.
@@ -158,49 +162,54 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	labgob.Register(ShardOperationArgs{})
 	labgob.Register(ShardOperationReply{})
 
-	kv := new(ShardKV)
-	kv.me = me
-	kv.maxraftstate = maxraftstate
-	kv.make_end = make_end
-	kv.gid = gid
-	kv.ctrlers = ctrlers
-
 	// Your initialization code here.
-
 	debug.Debug(debug.KVWarn, "G%d:S%d KVServer Init", gid, me)
-
-	// Use something like this to talk to the shardctrler:
-	kv.mck = shardctrler.MakeClerk(kv.ctrlers)
-
-	kv.applyCh = make(chan raft.ApplyMsg)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
-	kv.shards = make(map[int]*Shard)
-	kv.clientSessions = make(map[int64]Session)
-	kv.notifyChans = make(map[int]chan CommandReply)
-	kv.persister = persister
-	kv.lastApplied = 0
-	kv.previousCfg = &shardctrler.Config{}
-	kv.currentCfg = &shardctrler.Config{}
-
+	applyCh := make(chan raft.ApplyMsg)
+	kv := &ShardKV{
+		me:           me,
+		rf:           raft.Make(servers, me, persister, applyCh),
+		applyCh:      applyCh,
+		make_end:     make_end,
+		gid:          gid,
+		ctrlers:      ctrlers,
+		maxraftstate: maxraftstate,
+		// Use something like this to talk to the shardctrler:
+		mck:            shardctrler.MakeClerk(ctrlers),
+		persister:      persister,
+		shards:         make(map[int]*Shard),
+		clientSessions: make(map[int64]Session),
+		notifyChans:    make(map[int]chan *CommandReply),
+		lastApplied:    0,
+		previousCfg:    &shardctrler.Config{},
+		currentCfg:     &shardctrler.Config{},
+	}
 	for shardId := range kv.currentCfg.Shards {
 		kv.shards[shardId] = NewShard()
 	}
-
 	snapshot := persister.ReadSnapshot()
 	kv.installSnapshot(snapshot)
 
 	go kv.applier()
-	go kv.configUpdater()
-	go kv.shardPuller()
-	go kv.garbageCollector()
-	go kv.logEntryChecker()
+	go kv.monitor(kv.updateConfigAction, UpdateConfigTimeout)
+	go kv.monitor(kv.migrateShardsAction, MigrateShardsTimeout)
+	go kv.monitor(kv.collectGarbageAction, CollectGarbageTimeout)
+	go kv.monitor(kv.checkLogEntryAction, CheckLogEntryTimeout)
 
 	return kv
 }
 
-func (kv *ShardKV) getNotifyChan(logIndex int) chan CommandReply {
+func (kv *ShardKV) monitor(action func(), timeout time.Duration) {
+	for !kv.killed() {
+		if _, isLeader := kv.rf.GetState(); isLeader {
+			action()
+		}
+		time.Sleep(timeout)
+	}
+}
+
+func (kv *ShardKV) getNotifyChan(logIndex int) chan *CommandReply {
 	if _, ok := kv.notifyChans[logIndex]; !ok {
-		kv.notifyChans[logIndex] = make(chan CommandReply, 1)
+		kv.notifyChans[logIndex] = make(chan *CommandReply, 1)
 	}
 	return kv.notifyChans[logIndex]
 }

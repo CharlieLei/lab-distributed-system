@@ -3,48 +3,38 @@ package shardkv
 import (
 	"6.824/debug"
 	"sync"
-	"time"
 )
 
-func (kv *ShardKV) shardPuller() {
-	for {
-		if _, isLeader := kv.rf.GetState(); isLeader {
-			kv.mu.Lock()
+func (kv *ShardKV) migrateShardsAction() {
+	kv.mu.Lock()
 
-			groupId2shardIds := kv.getShardIdsByStatus(PULLING)
+	groupId2shardIds := kv.getShardIdsByStatus(PULLING)
 
-			if len(groupId2shardIds) > 0 {
-				debug.Debug(debug.KVShard, "G%d:S%d shardPuller, prevCfg %v currCfg %v groupId2shardIds %v kvshards %v",
-					kv.gid, kv.me, kv.previousCfg, kv.currentCfg, groupId2shardIds, kv.shards)
-			}
-
-			var wg sync.WaitGroup
-			for groupId, shardIds := range groupId2shardIds {
-				wg.Add(1)
-				// CAUTION: 旧的config才有需要pulling的shard所在的group，新的config可能已经将这个group删除了
-				go func(servers []string, configNum int, shardIds []int) {
-					defer wg.Done()
-					args := ShardOperationArgs{configNum, shardIds}
-					for _, server := range servers {
-						var reply ShardOperationReply
-						srv := kv.make_end(server)
-						debug.Debug(debug.KVShard, "G%d:S%d Start GetShardsData Send to Server %v, shardOpArgs %v",
-							kv.gid, kv.me, server, args)
-						ok := srv.Call("ShardKV.GetShardsData", &args, &reply)
-						if ok && reply.Err == OK {
-							debug.Debug(debug.KVShard, "G%d:S%d Execute InsertShards, shardInfo %v",
-								kv.gid, kv.me, reply)
-							kv.Execute(Command{CmdInsertShards, reply}, &CommandReply{})
-						}
-					}
-				}(kv.previousCfg.Groups[groupId], kv.currentCfg.Num, shardIds)
-			}
-
-			kv.mu.Unlock()
-			wg.Wait()
-		}
-		time.Sleep(50 * time.Millisecond)
+	if len(groupId2shardIds) > 0 {
+		debug.Debug(debug.KVShard, "G%d:S%d shardPuller, prevCfg %v currCfg %v groupId2shardIds %v kvshards %v",
+			kv.gid, kv.me, kv.previousCfg, kv.currentCfg, groupId2shardIds, kv.shards)
 	}
+
+	var wg sync.WaitGroup
+	for groupId, shardIds := range groupId2shardIds {
+		wg.Add(1)
+		// CAUTION: 旧的config才有需要pulling的shard所在的group，新的config可能已经将这个group删除了
+		go func(servers []string, configNum int, shardIds []int) {
+			defer wg.Done()
+			args := ShardOperationArgs{configNum, shardIds}
+			for _, server := range servers {
+				var reply ShardOperationReply
+				srv := kv.make_end(server)
+				ok := srv.Call("ShardKV.GetShardsData", &args, &reply)
+				if ok && reply.Err == OK {
+					kv.Execute(Command{CmdInsertShards, reply}, &CommandReply{})
+				}
+			}
+		}(kv.previousCfg.Groups[groupId], kv.currentCfg.Num, shardIds)
+	}
+
+	kv.mu.Unlock()
+	wg.Wait()
 }
 
 func (kv *ShardKV) GetShardsData(args *ShardOperationArgs, reply *ShardOperationReply) {
@@ -78,7 +68,7 @@ func (kv *ShardKV) GetShardsData(args *ShardOperationArgs, reply *ShardOperation
 	reply.ConfigNum, reply.Err = args.ConfigNum, OK
 }
 
-func (kv *ShardKV) applyInsertShards(shardsInfo *ShardOperationReply) CommandReply {
+func (kv *ShardKV) applyInsertShards(shardsInfo *ShardOperationReply) *CommandReply {
 	var reply CommandReply
 	if shardsInfo.ConfigNum == kv.currentCfg.Num {
 		for shardId, shardKV := range shardsInfo.ShardsKV {
@@ -115,5 +105,5 @@ func (kv *ShardKV) applyInsertShards(shardsInfo *ShardOperationReply) CommandRep
 	}
 	debug.Debug(debug.KVShard, "G%d:S%d ApplyInsertShards Finished, shardsInfo %v rply %v",
 		kv.gid, kv.me, shardsInfo, reply)
-	return reply
+	return &reply
 }

@@ -30,12 +30,13 @@ func (kv *ShardKV) ExecOperation(args *OperationArgs, reply *CommandReply) {
 	kv.Execute(Command{CmdOperation, *args}, reply)
 }
 
-func (kv *ShardKV) applyOperation(args *OperationArgs) CommandReply {
+func (kv *ShardKV) applyOperation(args *OperationArgs) *CommandReply {
 	var reply CommandReply
 	shardId := key2shard(args.Key)
 	if kv.canServe(shardId) {
 		if !args.isReadOnly() && kv.isDuplicateRequest(args.ClientId, args.SequenceNum) {
-			reply = kv.clientSessions[args.ClientId].LastReply
+			lastReply := kv.clientSessions[args.ClientId].LastReply
+			reply.Err, reply.Value = lastReply.Err, lastReply.Value
 		} else {
 			// apply operation to shard
 			switch args.Op {
@@ -48,7 +49,7 @@ func (kv *ShardKV) applyOperation(args *OperationArgs) CommandReply {
 			}
 
 			if !args.isReadOnly() {
-				kv.clientSessions[args.ClientId] = Session{args.SequenceNum, reply}
+				kv.clientSessions[args.ClientId] = Session{args.SequenceNum, &reply}
 			}
 		}
 	} else {
@@ -56,7 +57,7 @@ func (kv *ShardKV) applyOperation(args *OperationArgs) CommandReply {
 	}
 	debug.Debug(debug.KVOp, "G%d:S%d ApplyOp Finished, args %v rply %v shards %v",
 		kv.gid, kv.me, args, reply, kv.shards)
-	return reply
+	return &reply
 }
 
 func (kv *ShardKV) isDuplicateRequest(clientId int64, sequenceNum int) bool {

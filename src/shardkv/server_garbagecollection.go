@@ -3,47 +3,41 @@ package shardkv
 import (
 	"6.824/debug"
 	"sync"
-	"time"
 )
 
-func (kv *ShardKV) garbageCollector() {
-	for {
-		if _, isLeader := kv.rf.GetState(); isLeader {
-			kv.mu.Lock()
+func (kv *ShardKV) collectGarbageAction() {
+	kv.mu.Lock()
 
-			groupId2shardIds := kv.getShardIdsByStatus(GCING)
+	groupId2shardIds := kv.getShardIdsByStatus(GCING)
 
-			if len(groupId2shardIds) > 0 {
-				debug.Debug(debug.KVGc, "G%d:S%d garbageCollector, prevCfg %v currCfg %v groupId2shardIds %v kvshards %v",
-					kv.gid, kv.me, kv.previousCfg, kv.currentCfg, groupId2shardIds, kv.shards)
-			}
-
-			var wg sync.WaitGroup
-			for groupId, shardIds := range groupId2shardIds {
-				wg.Add(1)
-				go func(servers []string, configNum int, shardIds []int) {
-					defer wg.Done()
-					args := ShardOperationArgs{configNum, shardIds}
-					for _, server := range servers {
-						var reply ShardOperationReply
-						srv := kv.make_end(server)
-						debug.Debug(debug.KVGc, "G%d:S%d Start DeleteShardsData Send to Server %v, shardOpArgs %v shards %v",
-							kv.gid, kv.me, server, args, kv.shards)
-						ok := srv.Call("ShardKV.DeleteShardsData", &args, &reply)
-						if ok && reply.Err == OK {
-							debug.Debug(debug.KVGc, "G%d:S%d Execute DeleteShards, rply %v shards %v",
-								kv.gid, kv.me, reply, kv.shards)
-							kv.Execute(Command{CmdDeleteShards, args}, &CommandReply{})
-						}
-					}
-				}(kv.previousCfg.Groups[groupId], kv.currentCfg.Num, shardIds)
-			}
-
-			kv.mu.Unlock()
-			wg.Wait()
-		}
-		time.Sleep(50 * time.Millisecond)
+	if len(groupId2shardIds) > 0 {
+		debug.Debug(debug.KVGc, "G%d:S%d garbageCollector, prevCfg %v currCfg %v groupId2shardIds %v kvshards %v",
+			kv.gid, kv.me, kv.previousCfg, kv.currentCfg, groupId2shardIds, kv.shards)
 	}
+
+	var wg sync.WaitGroup
+	for groupId, shardIds := range groupId2shardIds {
+		wg.Add(1)
+		go func(servers []string, configNum int, shardIds []int) {
+			defer wg.Done()
+			args := ShardOperationArgs{configNum, shardIds}
+			for _, server := range servers {
+				var reply ShardOperationReply
+				srv := kv.make_end(server)
+				debug.Debug(debug.KVGc, "G%d:S%d Start DeleteShardsData Send to Server %v, shardOpArgs %v shards %v",
+					kv.gid, kv.me, server, args, kv.shards)
+				ok := srv.Call("ShardKV.DeleteShardsData", &args, &reply)
+				if ok && reply.Err == OK {
+					debug.Debug(debug.KVGc, "G%d:S%d Execute DeleteShards, rply %v shards %v",
+						kv.gid, kv.me, reply, kv.shards)
+					kv.Execute(Command{CmdDeleteShards, args}, &CommandReply{})
+				}
+			}
+		}(kv.previousCfg.Groups[groupId], kv.currentCfg.Num, shardIds)
+	}
+
+	kv.mu.Unlock()
+	wg.Wait()
 }
 
 func (kv *ShardKV) DeleteShardsData(args *ShardOperationArgs, reply *ShardOperationReply) {
@@ -84,7 +78,7 @@ func (kv *ShardKV) DeleteShardsData(args *ShardOperationArgs, reply *ShardOperat
 	kv.mu.Unlock()
 }
 
-func (kv *ShardKV) applyDeleteShards(shardsInfo *ShardOperationArgs) CommandReply {
+func (kv *ShardKV) applyDeleteShards(shardsInfo *ShardOperationArgs) *CommandReply {
 	var reply CommandReply
 	if shardsInfo.ConfigNum == kv.currentCfg.Num {
 		for _, shardId := range shardsInfo.ShardIds {
@@ -106,5 +100,5 @@ func (kv *ShardKV) applyDeleteShards(shardsInfo *ShardOperationArgs) CommandRepl
 		debug.Debug(debug.KVGc, "G%d:S%d ApplyDeleteShards shardsInfo.ConfigNum %d != kv.currentCfg.Num %d, shardsInfo %v rply %v",
 			kv.gid, kv.me, shardsInfo.ConfigNum, kv.currentCfg.Num, shardsInfo, reply)
 	}
-	return reply
+	return &reply
 }
