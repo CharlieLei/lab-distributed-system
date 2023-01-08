@@ -26,4 +26,6 @@
 
 ### Lab4
 
-![lab4结果](docs/imgs/lab4.png)
+![lab4a结果](docs/imgs/lab4a.png)
+
+![lab4b结果](docs/imgs/lab4b.png)
